@@ -7,6 +7,12 @@
 ## Features
 
 - ⬆️⬇️ **Turn-by-turn navigation** — a floating button pair in the bottom-right corner of the conversation, right above the built-in "scroll to bottom" button:
+
+  ```
+      ⬆   ← back to the start of the current turn
+      ⬇   ← to the end of the current turn
+  ```
+
   - **Up arrow** — back to the start of the turn you are currently reading: the first sentence of that turn's **final result** (all reasoning, tool calls, and transition sentences skipped). Once your viewport is already pinned to the turn start, it jumps to the start of the **previous** turn.
   - **Down arrow** — to the **end** of the current turn (the bottom of its last rendered row). Once your viewport is already pinned to the turn end, it jumps to the end of the **next** turn.
   - The buttons only appear once the session has at least one turn with actual text.
@@ -14,10 +20,16 @@
 ## Install (30 seconds)
 
 ```sh
-dsh plugin --profile web add link:/path/to/@yangzhe1991/dsh-web-enhance
+dsh plugin --profile web add @yangzhe1991/dsh-web-enhance
 ```
 
-Restart the Web GUI (`Ctrl+C` the `dsh web` process and run it again) and refresh the browser tab. (`dsh plugin` runs `pnpm add` and auto-appends the bundle to `dsh.profile.bundles`; the `link:` spec keeps a live symlink so edits take effect after a rebuild + restart.)
+Restart the Web GUI (`Ctrl+C` the `dsh web` process and run it again) and refresh the browser tab. (`dsh plugin` runs `pnpm add` and auto-appends the bundle to `dsh.profile.bundles`.)
+
+For local development, install from a path instead — the `link:` spec keeps a live symlink so edits take effect after a rebuild + restart:
+
+```sh
+dsh plugin --profile web add link:/path/to/@yangzhe1991/dsh-web-enhance
+```
 
 ## How it works
 

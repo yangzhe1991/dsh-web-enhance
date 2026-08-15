@@ -7,6 +7,12 @@
 ## 功能
 
 - ⬆️⬇️ **逐轮导航** —— 对话右下角悬浮按钮组,位于官方「滚到底部」圆钮正上方:
+
+  ```
+      ⬆   ← 回到当前轮的开头
+      ⬇   ← 跳到当前轮的结尾
+  ```
+
   - **上箭头** —— 回到当前正在看的这一轮的**开头**:该轮「最终结果」的第一句(思考、工具调用、过程中蹦出来的过渡句全部跳过)。视口已经停在该轮开头时,跳到**上一轮**的开头。
   - **下箭头** —— 跳到当前轮的**结尾**(该轮最后一行内容的底部)。视口已经停在该轮结尾时,跳到**下一轮**的结尾。
   - 会话里出现过含正文的轮之后按钮才会显示。
@@ -14,10 +20,16 @@
 ## 安装(30 秒)
 
 ```sh
-dsh plugin --profile web add link:/path/to/@yangzhe1991/dsh-web-enhance
+dsh plugin --profile web add @yangzhe1991/dsh-web-enhance
 ```
 
-重启 Web GUI(Ctrl+C 停掉 `dsh web` 进程再重新运行)并刷新浏览器标签即可(`dsh plugin` 会执行 `pnpm add` 并自动把 bundle 追加到 `dsh.profile.bundles`;用 `link:` 规格保留活符号链接,改完代码重新 build + 重启即生效)。
+重启 Web GUI(Ctrl+C 停掉 `dsh web` 进程再重新运行)并刷新浏览器标签即可(`dsh plugin` 会执行 `pnpm add` 并自动把 bundle 追加到 `dsh.profile.bundles`)。
+
+本地开发时改为从路径安装,`link:` 规格保留活符号链接,改完代码重新 build + 重启即生效:
+
+```sh
+dsh plugin --profile web add link:/path/to/@yangzhe1991/dsh-web-enhance
+```
 
 ## 实现原理
 
