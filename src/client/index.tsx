@@ -25,7 +25,8 @@
  * (过渡句 blocks 形如 [思考, 文字, 工具…],最终结果形如 [思考, 文字] 或
  * [文字]);整轮没有收尾总结时回退到轮内最后一个含正文的节点。DOM 定位
  * 复用官方标记(data-chat-anchor-key + [data-conversation-scroll]),开头
- * 锚点越过思考折叠条(DisclosureRow,带 aria-expanded)落在正文起点。
+ * 锚点越过思考块根元素(data-variant="think",展开态含整条思维链)落在
+ * 正文起点。
  */
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -290,8 +291,13 @@ function findRow(flow: Element, key: string): Element | null {
  *
  * - edge 'start':该轮最终结果正文起点对齐视口顶部。定位规则(数据驱动,
  *   避免 DOM 猜测):若该节点 blocks 以 reasoning 开头(先思考后正文),
- *   行内第一个折叠条(DisclosureRow,带 aria-expanded)就是思考条,取其
- *   底部 + 12px;否则正文从行顶开始,取行顶。
+ *   取行内最后一个思考块根元素([data-variant="think"])的底部 + 12px;
+ *   否则正文从行顶开始,取行顶。
+ *
+ *   为什么取思考块「根元素」而不是折叠条:官方 ReasoningRow 的展开内容
+ *   (思维链全文)挂在折叠条([aria-expanded])下方的兄弟节点里 —— 展开态
+ *   下折叠条自身只有一行高,取它的 bottom 会落在思维链开头;根元素在
+ *   展开态下包含整条链,折叠态下等于折叠条本身,两种状态都正确。
  * - edge 'end':该轮最后一个已渲染节点的行底对齐视口底部(轮尾 = 该轮
  *   内容结束的位置,最终结果之后可能还有空思考节点,一并算进轮尾)。
  *
@@ -316,8 +322,14 @@ function turnTargetScrollTop(chat: ChatLike, flow: Element, scrollport: Element,
   const blocks = node !== undefined ? nodeBlocks(node) : undefined
   let anchorTop: number
   if (blocks?.[0]?.kind === 'reasoning') {
-    const expander = row.querySelector('[aria-expanded]')
-    anchorTop = (expander !== null ? expander.getBoundingClientRect().bottom : row.getBoundingClientRect().top) + 12
+    // 思考块根元素(data-variant="think")才是整条思维链的容器:折叠态下
+    // 它等于折叠条,展开态下思维链全文挂载在折叠条([aria-expanded])下方
+    // 的兄弟节点里。若取折叠条的 bottom,展开时会落在思维链开头而不是
+    // 正文起点 —— 锚点必须取最后一个思考块根的底部(blocks 以 reasoning
+    // 开头时,正文紧随最后一个思考块之后)。
+    const thinkRoots = row.querySelectorAll('[data-variant="think"]')
+    const lastThink = thinkRoots[thinkRoots.length - 1]
+    anchorTop = (lastThink !== undefined ? lastThink.getBoundingClientRect().bottom : row.getBoundingClientRect().top) + 12
   } else {
     anchorTop = row.getBoundingClientRect().top
   }

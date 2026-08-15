@@ -1,6 +1,6 @@
 {
   "name": "@yangzhe1991/dsh-web-enhance",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "DSH Web UI 增强插件:逐轮对话导航、思维链默认展开 | DSH Web UI enhancement plugin: turn-by-turn conversation navigation & thinking-chain default-expand",
   "type": "module",
   "main": "lib/index.js",
