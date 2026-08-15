@@ -1,0 +1,6 @@
+# dsh-web-enhance 配置层:注册插件行。
+# 作为 profile bundle 时,本层叠加在 dsh-base 之后;
+# 用户可在自己 profile 的 cordis.patch.yml 里按 id 覆盖或禁用此行。
+- insert:
+    - id: web-enhance
+      name: dsh-web-enhance
