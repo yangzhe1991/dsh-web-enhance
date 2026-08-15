@@ -14,7 +14,7 @@
 ## 安装(30 秒)
 
 ```sh
-dsh plugin --profile web add link:/path/to/dsh-web-enhance
+dsh plugin --profile web add link:/path/to/@yangzhe1991/dsh-web-enhance
 ```
 
 重启 Web GUI(Ctrl+C 停掉 `dsh web` 进程再重新运行)并刷新浏览器标签即可(`dsh plugin` 会执行 `pnpm add` 并自动把 bundle 追加到 `dsh.profile.bundles`;用 `link:` 规格保留活符号链接,改完代码重新 build + 重启即生效)。
@@ -36,7 +36,7 @@ npx tsc --noEmit     # 类型检查
 ## 卸载
 
 ```sh
-dsh plugin --profile web remove dsh-web-enhance
+dsh plugin --profile web remove @yangzhe1991/dsh-web-enhance
 ```
 
 ## 许可证

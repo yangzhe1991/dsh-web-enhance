@@ -14,7 +14,7 @@
 ## Install (30 seconds)
 
 ```sh
-dsh plugin --profile web add link:/path/to/dsh-web-enhance
+dsh plugin --profile web add link:/path/to/@yangzhe1991/dsh-web-enhance
 ```
 
 Restart the Web GUI (`Ctrl+C` the `dsh web` process and run it again) and refresh the browser tab. (`dsh plugin` runs `pnpm add` and auto-appends the bundle to `dsh.profile.bundles`; the `link:` spec keeps a live symlink so edits take effect after a rebuild + restart.)
@@ -36,7 +36,7 @@ npx tsc --noEmit     # type-check
 ## Uninstall
 
 ```sh
-dsh plugin --profile web remove dsh-web-enhance
+dsh plugin --profile web remove @yangzhe1991/dsh-web-enhance
 ```
 
 ## License

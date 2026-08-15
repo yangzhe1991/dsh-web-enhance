@@ -11,7 +11,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { build } from 'esbuild'
 
-const PLUGIN_ID = 'dsh-web-enhance'
+const PLUGIN_ID = '@yangzhe1991/dsh-web-enhance'
 
 // 浏览器半的 externals:必须是平台模块表(CLIENT_EXTERNALS)中的成员,
 // 否则 require 会在运行时抛错。详见 dsh 仓库 packages/client/tsdown.client.ts。
@@ -80,4 +80,4 @@ await writeFile('lib/types/client/index.d.ts', [
   '',
 ].join('\n'))
 
-console.log('[dsh-web-enhance] build done: lib/index.js, lib/client.js, lib/types/*.d.ts')
+console.log('[@yangzhe1991/dsh-web-enhance] build done: lib/index.js, lib/client.js, lib/types/*.d.ts')
