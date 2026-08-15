@@ -1,12 +1,19 @@
 /**
  * dsh-web-enhance 插件,浏览器半 —— 前端增强功能集合。
  *
- * 功能:以「轮」(turn:你问一句 → agent 完整回复一段)为单位的对话导航。
+ * 功能一:以「轮」(turn:你问一句 → agent 完整回复一段)为单位的对话导航。
  * - 摁「上」:回到当前正在看的这一轮的「开头」(最终结果正文起点,跳过
  *   思考、工具和过程性的过渡句);若滚动位置已停在该轮开头附近,则跳到
  *   上一轮的开头。
  * - 摁「下」:跳到当前轮的「结尾」(最终结果行底);若已停在该轮结尾附近,
  *   则跳到下一轮的结尾。
+ *
+ * 功能二:思维链默认展开。官方把每条 reasoning 块渲染成「Think」折叠条
+ * (DisclosureRow),默认收起、只露一行摘要;打开开关后,本插件自动点开
+ * 对话里全部(包括流式过程中新挂载的)Think 折叠条,直接看思维链全文。
+ * 开关是悬浮按钮组里带灯泡图标的第三个按钮,状态持久化在 localStorage,
+ * 默认开启。用户手动收起某条折叠条不会被强制展开(只对「新增」的子树
+ * 生效,不监听属性变化)。
  *
  * 实现:注册到 conversation.session.header.actions(session 作用域),
  * 通过 useSession 订阅 chat 快照(order/nodes/locations/timeline),用
@@ -20,11 +27,15 @@
  * 复用官方标记(data-chat-anchor-key + [data-conversation-scroll]),开头
  * 锚点越过思考折叠条(DisclosureRow,带 aria-expanded)落在正文起点。
  */
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { IconChevronDownOutline14, IconChevronUpOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  IconChevronDownOutline14,
+  IconChevronUpOutline14,
+  IconThinkOutline14,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 // 触发 SlotMap 声明合并:conversation.session.header.actions 由 conversation 声明。
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 
@@ -34,9 +45,11 @@ let styleInjected = false
 /**
  * 按钮样式。
  * - .dsh-webe-jump-float:悬浮容器,定位在视口右下角、官方「滚到底部」
- *   圆钮(toBottomSlot,z-index 8)的正上方,竖排两个圆钮;
+ *   圆钮(toBottomSlot,z-index 8)的正上方,竖排圆钮;
  * - .dsh-webe-jump:圆钮本体,外观照官方 .Md3f7G_toBottom(34px 圆形、
- *   悬浮底色 + 阴影),hover 变亮。
+ *   悬浮底色 + 阴影),hover 变亮;
+ * - .dsh-webe-jump[data-active='true']:思维链默认展开开关的开启态,
+ *   底色加深 + 图标用品牌强调色,与关闭态区分。
  */
 const BUTTON_CSS = `
 .dsh-webe-jump-float {
@@ -67,6 +80,10 @@ const BUTTON_CSS = `
 .dsh-webe-jump:focus-visible {
   background: var(--dsw-alias-button-floating-hover);
 }
+.dsh-webe-jump[data-active='true'] {
+  background: var(--dsw-alias-button-floating-hover);
+  color: var(--dsw-alias-state-business-primary);
+}
 `
 
 /** 全局注入一次按钮样式(浏览器端 bundle 的模块级副作用)。 */
@@ -77,6 +94,60 @@ function ensureStyle(): void {
   tag.dataset.plugin = 'dsh-web-enhance'
   tag.textContent = BUTTON_CSS
   document.head.appendChild(tag)
+}
+
+// —— 思维链默认展开 ——
+//
+// 官方把每条 reasoning 块渲染成 ReasoningRow(根节点 data-variant="think"),
+// 内部用 useState 控制 DisclosureRow 的展开态:收起时只挂载一行摘要,
+// 展开时才挂载思维链全文(children)。所以「默认展开」没法用 CSS 盖,
+// 只能点击折叠条触发官方 onToggle,翻转它内部的 React 状态。
+// 折叠条可整行点击(expandOnRowClick),特征:data-disclosure-row +
+// aria-expanded="false"。
+
+/** 思维链默认展开开关的 localStorage 键。 */
+const EXPAND_THINK_KEY = 'dsh-web-enhance.expand-think'
+
+/** 读取开关持久值:默认开启(产品诉求即「默认展开」),localStorage 异常也按开处理。 */
+function readExpandThink(): boolean {
+  try {
+    return localStorage.getItem(EXPAND_THINK_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+/** 写入开关持久值(localStorage 不可用,如隐私模式,静默忽略)。 */
+function writeExpandThink(enabled: boolean): void {
+  try {
+    localStorage.setItem(EXPAND_THINK_KEY, enabled ? '1' : '0')
+  } catch {
+    // 忽略:开关状态只在本次会话内生效
+  }
+}
+
+/**
+ * 展开 root 子树内所有「折叠的思维链行」。
+ *
+ * 选择器只匹配官方 Think 折叠条:根 data-variant="think" 下的
+ * data-disclosure-row(展开态为 aria-expanded="true",折叠态为 "false")。
+ * 对每个折叠行调用 click(),等价于用户点了一下整行,触发官方 onToggle。
+ *
+ * autoExpandedRows 是去重保险:同一个折叠条元素可能同时被两个观察者
+ * (如多会话各挂一份 header.actions)扫到,而官方 onToggle 用的是
+ * setExpanded(v => !v) 更新器 —— 同一 tick 里点两次会翻转回去,等于
+ * 没点。WeakSet 保证同一元素只自动点一次;用户手动收起后再点开的行
+ * 是属性变化,本就不在扫描范围,不会被重新展开。
+ */
+const autoExpandedRows = new WeakSet<HTMLElement>()
+
+function expandThinkRowsWithin(root: ParentNode): void {
+  const rows = root.querySelectorAll('[data-variant="think"] [data-disclosure-row][aria-expanded="false"]')
+  for (const row of rows) {
+    if (!(row instanceof HTMLElement) || autoExpandedRows.has(row)) continue
+    autoExpandedRows.add(row)
+    row.click()
+  }
 }
 
 /** 需要的 client 服务:sessions(会话数据)、slots(slot 注册)。 */
@@ -315,9 +386,10 @@ function navigate(chat: ChatLike, direction: 'up' | 'down'): void {
 }
 
 /**
- * 「轮导航」悬浮按钮组:上箭头回到当前轮开头(已停在轮首则翻上一轮),
- * 下箭头跳到当前轮结尾(已停在轮尾则翻下一轮)。会话里没有任何含正文的
- * 轮时不渲染。
+ * 「轮导航 + 思维链默认展开」悬浮按钮组:上箭头回到当前轮开头(已停在
+ * 轮首则翻上一轮),下箭头跳到当前轮结尾(已停在轮尾则翻下一轮),灯泡
+ * 按钮是思维链默认展开开关(开启态高亮)。会话里没有任何含正文的轮时
+ * 不渲染。
  *
  * 挂载点仍是 header.actions(session 作用域,随会话切换自动重订阅),
  * 但用 createPortal 渲染到 document.body 并以 fixed 定位在右下角,
@@ -327,10 +399,35 @@ function JumpToReplyEnds({ useSession }: PropsRuntime<'conversation.session.head
   // Chat 快照:order 为节点 key 的渲染顺序,nodes 为 key → 节点。
   const chat = useSession((state) => state.chat)
 
+  // 思维链默认展开开关:默认开,持久化在 localStorage,跨会话/刷新生效。
+  const [expandThink, setExpandThink] = useState(readExpandThink)
+
   // 首次渲染时注入样式(按需,避免空白 <style> 常驻)。
   useEffect(() => {
     ensureStyle()
   }, [])
+
+  // 开关打开时自动展开思维链:先全量扫一遍已有行(初次开启/页面加载时
+  // 已渲染的历史行),再挂 MutationObserver 盯「新增」的子树 —— 流式
+  // 渲染过程中新挂载的 Think 行会被立刻点开,展开态下官方才会挂载全文。
+  //
+  // 只扫新增子树、不监听属性变化:用户手动收起某条折叠条时,React 只是
+  // 把摘要换回 DOM(属性 + 节点替换),不会命中「新增的折叠行」,因此
+  // 手动操作不会被插件强行展开回去,尊重用户。
+  useEffect(() => {
+    if (!expandThink) return
+    expandThinkRowsWithin(document)
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type !== 'childList') continue
+        for (const added of mutation.addedNodes) {
+          if (added instanceof Element) expandThinkRowsWithin(added)
+        }
+      }
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [expandThink])
 
   // 会话里还没有任何含正文的轮(新会话/加载中)时整个按钮组不渲染。
   if (!hasAnyTextTurn(chat)) return null
@@ -354,6 +451,21 @@ function JumpToReplyEnds({ useSession }: PropsRuntime<'conversation.session.head
         aria-label="跳到本轮结尾(已停在结尾则跳下一轮)"
       >
         <IconChevronDownOutline14 />
+      </button>
+      <button
+        type="button"
+        className="dsh-webe-jump"
+        data-active={expandThink || undefined}
+        aria-pressed={expandThink}
+        onClick={() => {
+          const next = !expandThink
+          setExpandThink(next)
+          writeExpandThink(next)
+        }}
+        title={expandThink ? '思维链默认展开:开(点击关闭)' : '思维链默认展开:关(点击开启)'}
+        aria-label={expandThink ? '思维链默认展开:开(点击关闭)' : '思维链默认展开:关(点击开启)'}
+      >
+        <IconThinkOutline14 />
       </button>
     </span>,
     document.body,
