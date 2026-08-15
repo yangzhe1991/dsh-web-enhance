@@ -12,6 +12,8 @@
 - **Turn-by-turn conversation navigation** — a floating button pair in the bottom-right corner of the conversation that jumps to the start of the turn you are reading (or the previous turn's start) and to the end of the current turn (or the next turn's end) — always landing on the actual reply text, with reasoning, tool calls, and transition sentences skipped.
 - **Thinking chain default-expand** — a toggle (the lightbulb button, on by default) that automatically expands every "Think" reasoning disclosure in the conversation, so the full thinking chain is visible while streaming instead of a one-line summary.
 
+![dsh-web-enhance in action: the floating button group (⬆ ⬇ 💡, the lightbulb toggle lit = thinking-chain default-expand on) at the bottom-right corner of a conversation, with the thinking chains expanded](https://raw.githubusercontent.com/yangzhe1991/dsh-web-enhance/main/screenshot.png)
+
 ## Features
 
 - 💡 **Thinking chain default-expand** — the third floating button (lightbulb icon) in the bottom-right corner, below the navigation pair:
