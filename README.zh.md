@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README.zh.md)
 
-DSH(DeepSeek Harness)浏览器插件:给 Web UI 增加一些顺手的小功能。
+**dsh-web-enhance** 是 [DSH(DeepSeek Harness)](https://github.com/deepseek-ai/deepseek-harness) Web UI 的浏览器插件,给界面增加一些顺手的小功能。目前提供**逐轮对话导航**:对话右下角悬浮按钮组,一键回到当前正在看的这一轮的开头(已停轮首则跳上一轮开头)、跳到当前轮的结尾(已停轮尾则跳下一轮结尾)—— 始终落在真正的回复正文上,思考、工具调用、过渡句都会被跳过。
 
 ## 功能
 
