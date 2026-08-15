@@ -4,7 +4,6 @@
 
 [![npm version](https://img.shields.io/npm/v/@yangzhe1991/dsh-web-enhance)](https://www.npmjs.com/package/@yangzhe1991/dsh-web-enhance)
 [![npm downloads](https://img.shields.io/npm/dm/@yangzhe1991/dsh-web-enhance)](https://www.npmjs.com/package/@yangzhe1991/dsh-web-enhance)
-[![npm types](https://img.shields.io/npm/types/@yangzhe1991/dsh-web-enhance)](https://www.npmjs.com/package/@yangzhe1991/dsh-web-enhance)
 [![license](https://img.shields.io/github/license/yangzhe1991/dsh-web-enhance)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/yangzhe1991/dsh-web-enhance)](https://github.com/yangzhe1991/dsh-web-enhance)
 [![last commit](https://img.shields.io/github/last-commit/yangzhe1991/dsh-web-enhance)](https://github.com/yangzhe1991/dsh-web-enhance)
