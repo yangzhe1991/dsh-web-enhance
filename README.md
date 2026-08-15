@@ -5,8 +5,6 @@
 [![npm version](https://img.shields.io/npm/v/@yangzhe1991/dsh-web-enhance)](https://www.npmjs.com/package/@yangzhe1991/dsh-web-enhance)
 [![npm downloads](https://img.shields.io/npm/dm/@yangzhe1991/dsh-web-enhance)](https://www.npmjs.com/package/@yangzhe1991/dsh-web-enhance)
 [![license](https://img.shields.io/github/license/yangzhe1991/dsh-web-enhance)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/yangzhe1991/dsh-web-enhance)](https://github.com/yangzhe1991/dsh-web-enhance)
-[![last commit](https://img.shields.io/github/last-commit/yangzhe1991/dsh-web-enhance)](https://github.com/yangzhe1991/dsh-web-enhance)
 [![dsh-plugin](https://img.shields.io/badge/dsh-plugin-1e90ff)](https://github.com/topics/dsh-plugin)
 
 **dsh-web-enhance** is a browser plugin for the [DSH (DeepSeek Harness)](https://github.com/deepseek-ai/deepseek-harness) web UI that adds small quality-of-life features. It currently ships **turn-by-turn conversation navigation**: a floating button pair in the bottom-right corner of the conversation that jumps to the start of the turn you are reading (or the previous turn's start) and to the end of the current turn (or the next turn's end) — always landing on the actual reply text, with reasoning, tool calls, and transition sentences skipped.
