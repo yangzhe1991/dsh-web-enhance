@@ -1,6 +1,6 @@
 {
   "name": "@yangzhe1991/dsh-web-enhance",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH Web UI enhancement plugin: turn-by-turn conversation navigation in the web UI",
   "type": "module",
   "main": "lib/index.js",
