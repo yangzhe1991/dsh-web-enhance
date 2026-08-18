@@ -15,9 +15,18 @@
  * 默认开启。用户手动收起某条折叠条不会被强制展开(只对「新增」的子树
  * 生效,不监听属性变化)。
  *
- * 实现:注册到 conversation.session.header.actions(session 作用域),
- * 通过 useSession 订阅 chat 快照(order/nodes/locations/timeline),用
- * createPortal 把按钮组渲染到 document.body,fixed 定位在对话右下角。
+ * 功能三:会话价格统计(仅 DeepSeek 官方 API)。当前会话的请求走
+ * provider 路由 `deepseek-official` 时,在官方 stats 行(输入/输出 token
+ * 那行)正下方渲染一行「≈ ¥0.83」:已加载历史窗口内的请求逐条按真实
+ * 时间戳分峰谷(北京时间 9-12、14-18 为峰时,价格为闲时 2 倍)、按模型
+ * 单价精确计价;tokenUsage 投影里窗口外(未翻页加载)的历史没有时间戳,
+ * 差额按当前模型闲时价估算并以「≈」前缀标示。算法见 cost.ts,价格表
+ * 数据源:https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+ *
+ * 实现:注册到 conversation.session.header.actions(session 作用域,轮导航
+ * 按钮组,createPortal 到 document.body)与 conversation.composer.dock
+ * (价格行,挂在官方 stats 行下方)。通过 useSession 订阅 chat 快照与
+ * trajectory 视图,useProjection 读 tokenUsage 全量投影。
  *
  * 轮的数据契约:chat.timeline.turnOrder 为轮序,chat.locations.getTurn(turn)
  * 返回该轮按顺序排列的节点 key。轮的「最终结果」= 轮内最后一个「含非空
@@ -28,29 +37,46 @@
  * 锚点越过思考块根元素(data-variant="think",展开态含整条思维链)落在
  * 正文起点。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, RequestInspectionSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   IconChevronDownOutline14,
   IconChevronUpOutline14,
   IconThinkOutline14,
+  Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 // 触发 SlotMap 声明合并:conversation.session.header.actions 由 conversation 声明。
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import { DEEPSEEK_PROVIDER, formatCostYuan, formatTokens, loadAccumulator, saveAccumulator, summarizeCost } from './cost'
+
+// trajectory 视图的声明合并:官方 ui-trajectory 把会话快照的 views 表
+// 扩展出 'trajectory' 键(requests 携带逐请求的 provider/model/usage/
+// startedAt),这里声明出价格统计需要的部分。本插件不依赖 ui-trajectory
+// 包的类型,只消费运行时数据;该视图缺失(装配不含 ui-trajectory)时
+// get 返回 undefined,价格行自动不渲染。
+declare module '@deepseek-ai/dsh-client-runtime/client' {
+  interface ConversationViewSnapshotMap {
+    trajectory: RequestInspectionSnapshot
+  }
+}
 
 /** 注入的 <style> 是否已存在(按钮样式,避免重复注入)。 */
 let styleInjected = false
 
 /**
- * 按钮样式。
+ * 插件样式。
  * - .dsh-webe-jump-float:悬浮容器,定位在视口右下角、官方「滚到底部」
  *   圆钮(toBottomSlot,z-index 8)的正上方,竖排圆钮;
  * - .dsh-webe-jump:圆钮本体,外观照官方 .Md3f7G_toBottom(34px 圆形、
  *   悬浮底色 + 阴影),hover 变亮;
  * - .dsh-webe-jump[data-active='true']:思维链默认展开开关的开启态,
- *   底色加深 + 图标用品牌强调色,与关闭态区分。
+ *   底色加深 + 图标用品牌强调色,与关闭态区分;
+ * - 价格行与官方 stats 行合流(见下):官方把 dock 出口包装渲染成
+ *   display:contents(行内样式),条目各自成块;价格存在时用 :has() 把
+ *   包装还原成真实 flex 行(!important 盖过行内样式),价格(order 0)
+ *   排最左、stats 行(order 2)跟在后面。
  */
 const BUTTON_CSS = `
 .dsh-webe-jump-float {
@@ -84,6 +110,44 @@ const BUTTON_CSS = `
 .dsh-webe-jump[data-active='true'] {
   background: var(--dsw-alias-button-floating-hover);
   color: var(--dsw-alias-state-business-primary);
+}
+/* 价格行存在时(第二个条目),dock 出口包装变成整宽 flex 行:
+   价格 + stats 作为一个整体居中(与原 stats 行居中的视觉一致),
+   价格是行内第一个元素(flex:none,永不压缩、永不溢出);stats 行
+   不再限死 748px、不撑满剩余宽度,只在整体真正超出屏幕时才收缩
+   省略(justify-content:center 下唯一可收缩项,价格始终可见)。 */
+[data-slot="conversation.composer.dock"]:has(> :nth-child(2)) {
+  display: flex !important;
+  align-items: baseline;
+  gap: 10px;
+  justify-content: center;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 4px calc(var(--dsh-composer-side-clearance) + 16px) 0;
+  box-sizing: border-box;
+}
+/* 官方 stats 行(条目里 DOM 序第一个):挪到价格之后,让出自身
+   块级布局与固定宽度,只在剩余空间不足时收缩省略。 */
+[data-slot="conversation.composer.dock"]:has(> :nth-child(2)) > :first-child {
+  order: 2;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+/* 价格本体:flex:none 的行首项,永不压缩、永不溢出。 */
+.dsh-webe-cost {
+  order: 0;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 `
 
@@ -154,7 +218,7 @@ function expandThinkRowsWithin(root: ParentNode): void {
 /** 需要的 client 服务:sessions(会话数据)、slots(slot 注册)。 */
 export const inject = ['sessions', 'slots']
 
-/** Client 插件 body:注册 header 按钮组。 */
+/** Client 插件 body:注册 header 按钮组与 composer.dock 价格行。 */
 export function apply(ctx: ClientContext): void {
   ctx.slots.inject(
     'conversation.session.header.actions',
@@ -166,6 +230,16 @@ export function apply(ctx: ClientContext): void {
       // 渲染位置确定。
       order: 15,
     }, JumpToReplyEnds),
+  )
+  ctx.slots.inject(
+    'conversation.composer.dock',
+    () => ctx.slots.register({
+      name: 'conversation.composer.dock',
+      id: 'web-enhance-session-cost',
+      // 官方 stats 行(输入/输出 token)取 0;取 10 渲染在其下方,
+      // 且不与未来官方条目并列。
+      order: 10,
+    }, SessionCostMeter),
   )
 }
 
@@ -395,6 +469,52 @@ function navigate(chat: ChatLike, direction: 'up' | 'down'): void {
 
   // 否则:回到当前轮的开头 / 跳到当前轮的结尾。
   scrollport.scrollTop = targetScroll
+}
+
+/**
+ * 会话价格行(conversation.composer.dock,渲染在官方 stats 行同一行、
+ * 行内容最左侧)。算法与口径见 cost.ts。
+ *
+ * 「边发生边累计」:每条观测到 usage 的请求立刻计价并持久化到
+ * localStorage(按会话,last-wins),历史分页把旧请求挤出窗口也不影响
+ * 累计;只有从未被观测过的历史才走闲时价估算(≈ 前缀)。渲染门控:
+ * 最近一次请求不是 deepseek-official 时不渲染(已切到其它 provider)。
+ */
+function SessionCostMeter({ useSession, useProjection, sessionId }: PropsRuntime<'conversation.composer.dock'>) {
+  const trajectory = useSession((state) => state.views.get('trajectory'))
+  const usage = useProjection('tokenUsage')
+
+  // 合并窗口里的新请求 → 累计器;mergeAccumulator 无变化时返回原引用,
+  // 下面的 effect 凭引用相等跳过落盘(流式期间不会反复写 localStorage)。
+  const { summary, next } = useMemo(
+    () => summarizeCost(trajectory, usage, loadAccumulator(sessionId)),
+    [trajectory, usage, sessionId],
+  )
+
+  useEffect(() => {
+    if (next !== loadAccumulator(sessionId)) saveAccumulator(sessionId, next)
+  }, [next, sessionId])
+
+  if (summary === null || !summary.current) return null
+
+  const inputTokens = summary.tokens.miss + summary.tokens.hit + summary.tokens.write
+  const label = [
+    `DeepSeek 官方 API(${DEEPSEEK_PROVIDER}) · 模型 ${summary.latestModel ?? '未知'}`,
+    `输入 ${formatTokens(inputTokens)} · 输出 ${formatTokens(summary.tokens.out)}`,
+    summary.peakCount > 0 || summary.offpeakCount > 0
+      ? `峰时 ${summary.peakCount} 次 · 闲时 ${summary.offpeakCount} 次(北京时间)`
+      : null,
+    summary.estimated > 0 ? '未加载历史差额按闲时价估算' : null,
+    summary.unknownModels.length > 0 ? `价格表未收录:${summary.unknownModels.join('、')}` : null,
+  ].filter((part): part is string => part !== null).join(' · ')
+
+  return (
+    <Tooltip label={label} side="top" delayMs={500}>
+      <span className="dsh-webe-cost">
+        {summary.estimated > 0 ? '≈ ' : ''}{formatCostYuan(summary.total)}
+      </span>
+    </Tooltip>
+  )
 }
 
 /**
