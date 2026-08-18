@@ -1,6 +1,6 @@
 {
   "name": "@yangzhe1991/dsh-web-enhance",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "DSH Web UI 增强插件:逐轮对话导航、思维链默认展开、DeepSeek 官方 API 会话价格统计 | DSH Web UI enhancement plugin: turn-by-turn navigation, thinking-chain default-expand & session cost meter for the official DeepSeek API",
   "type": "module",
   "main": "lib/index.js",
