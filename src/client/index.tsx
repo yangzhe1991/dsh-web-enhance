@@ -39,8 +39,7 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ClientContext, RequestInspectionSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import {
   IconChevronDownOutline14,
   IconChevronUpOutline14,
@@ -49,18 +48,15 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 // 触发 SlotMap 声明合并:conversation.session.header.actions 由 conversation 声明。
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { DEEPSEEK_PROVIDER, formatCostYuan, formatTokens, loadAccumulator, saveAccumulator, summarizeCost } from './cost'
-
-// trajectory 视图的声明合并:官方 ui-trajectory 把会话快照的 views 表
-// 扩展出 'trajectory' 键(requests 携带逐请求的 provider/model/usage/
-// startedAt),这里声明出价格统计需要的部分。本插件不依赖 ui-trajectory
-// 包的类型,只消费运行时数据;该视图缺失(装配不含 ui-trajectory)时
-// get 返回 undefined,价格行自动不渲染。
-declare module '@deepseek-ai/dsh-client-runtime/client' {
-  interface ConversationViewSnapshotMap {
-    trajectory: RequestInspectionSnapshot
-  }
-}
+import {
+  DEEPSEEK_PROVIDER,
+  formatCostYuan,
+  formatTokens,
+  loadAccumulator,
+  saveAccumulator,
+  summarizeCost,
+} from './cost'
+import type { RequestInspectionSnapshot } from './cost'
 
 /** 注入的 <style> 是否已存在(按钮样式,避免重复注入)。 */
 let styleInjected = false
@@ -297,12 +293,32 @@ function isFinalReply(node: { kind: string; data: unknown; visibility: string })
   return blocks !== undefined && blocks.length > 0 && blocks[blocks.length - 1].kind === 'text'
 }
 
-/** 所需的 chat 快照结构(useSession((state) => state.chat) 满足该形状)。 */
+/** 所需的 chat 快照结构(新前端 useChat / 旧前端 useSession((s) => s.chat) 均满足该形状)。 */
 interface ChatLike {
   order: readonly string[]
   nodes: { get(key: string): { kind: string; data: unknown; visibility: string } | undefined }
   locations: { getTurn(turn: number): readonly string[] }
   timeline: { turnOrder: readonly number[] }
+}
+
+/**
+ * 会话标准 props 的最小形状:新前端(0.1.2-alpha+)里 chat 快照改由
+ * dsh-client-ui-chat 通过 uiSession.provide({ hooks: ["chat"] }) 注册成
+ * 会话标准 hook useChat;trajectory 由 ui-trajectory 注册成 useTrajectory。
+ * 旧前端(0.1.0-rc.x)则分别是 useSession((s) => s.chat) 与
+ * useSession((s) => s.views.get('trajectory'))。两处都保留旧路径兜底,
+ * 同一环境内恒走同一分支,不违反 React hook 顺序规则。
+ */
+interface HeaderActionsProps {
+  useSession<T>(selector: (snapshot: { chat?: ChatLike }) => T): T
+  useChat?: <T>(selector: (snapshot: ChatLike) => T) => T
+}
+
+interface ComposerDockProps {
+  sessionId: string
+  useSession<T>(selector: (snapshot: { views?: { get(key: string): RequestInspectionSnapshot | undefined } }) => T): T
+  useTrajectory?: <T>(selector: (snapshot: RequestInspectionSnapshot) => T) => T
+  useProjection?: (key: string) => unknown
 }
 
 /** 节点 key 属于哪个轮(轮序从前到后找第一个包含它的轮)。 */
@@ -331,7 +347,8 @@ function finalTextNodeKey(chat: ChatLike, turn: number): string | null {
 }
 
 /** 会话里是否存在任何含正文的轮(决定按钮组是否渲染)。 */
-function hasAnyTextTurn(chat: ChatLike): boolean {
+function hasAnyTextTurn(chat: ChatLike | undefined): boolean {
+  if (chat === undefined) return false
   return chat.timeline.turnOrder.some((turn) => finalTextNodeKey(chat, turn) !== null)
 }
 
@@ -423,7 +440,8 @@ function turnTargetScrollTop(chat: ChatLike, flow: Element, scrollport: Element,
  * 锚点可能仍在视口内但用户其实停在行中段,宽阈值会误判成「已在开头」
  * 而直接翻页。
  */
-function navigate(chat: ChatLike, direction: 'up' | 'down'): void {
+function navigate(chat: ChatLike | undefined, direction: 'up' | 'down'): void {
+  if (chat === undefined) return
   const flow = document.querySelector('[data-chat-flow]')
   if (flow === null) return
   const scrollport = flow.closest('[data-conversation-scroll]')
@@ -480,9 +498,14 @@ function navigate(chat: ChatLike, direction: 'up' | 'down'): void {
  * 累计;只有从未被观测过的历史才走闲时价估算(≈ 前缀)。渲染门控:
  * 最近一次请求不是 deepseek-official 时不渲染(已切到其它 provider)。
  */
-function SessionCostMeter({ useSession, useProjection, sessionId }: PropsRuntime<'conversation.composer.dock'>) {
-  const trajectory = useSession((state) => state.views.get('trajectory'))
-  const usage = useProjection('tokenUsage')
+function SessionCostMeter({ useSession, useTrajectory, useProjection, sessionId }: ComposerDockProps) {
+  // trajectory 请求列表:新前端走会话标准 hook useTrajectory;旧前端退回
+  // useSession((s) => s.views.get('trajectory'))。两条数据源的请求条目
+  // 字段一致(startSeq/provenance/usage/startedAt),成本算法不变。
+  const trajectory = useTrajectory !== undefined
+    ? useTrajectory((state) => state)
+    : useSession((state) => state.views?.get('trajectory'))
+  const usage = useProjection?.('tokenUsage')
 
   // 合并窗口里的新请求 → 累计器;mergeAccumulator 无变化时返回原引用,
   // 下面的 effect 凭引用相等跳过落盘(流式期间不会反复写 localStorage)。
@@ -527,9 +550,12 @@ function SessionCostMeter({ useSession, useProjection, sessionId }: PropsRuntime
  * 但用 createPortal 渲染到 document.body 并以 fixed 定位在右下角,
  * 不占用头部空间。
  */
-function JumpToReplyEnds({ useSession }: PropsRuntime<'conversation.session.header.actions'>) {
-  // Chat 快照:order 为节点 key 的渲染顺序,nodes 为 key → 节点。
-  const chat = useSession((state) => state.chat)
+function JumpToReplyEnds({ useSession, useChat }: HeaderActionsProps) {
+  // Chat 快照:新前端走会话标准 hook useChat;旧前端退回 useSession 的
+  // chat 字段。快照形状一致(order/nodes/locations/timeline)。
+  const chat = useChat !== undefined
+    ? useChat((state) => state)
+    : useSession((state) => state.chat)
 
   // 思维链默认展开开关:默认开,持久化在 localStorage,跨会话/刷新生效。
   const [expandThink, setExpandThink] = useState(readExpandThink)

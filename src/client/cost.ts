@@ -21,10 +21,37 @@
  *   逐请求数据,差额用 tokenUsage 投影(全量 token 合计)扣除已累计
  *   部分后按闲时价估算,UI 用「≈」标注。
  */
-import type { RequestInspectionSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
-// 触发 SessionProjectionMap 声明合并:tokenUsage 由 dsh-token-meter 声明
-// (类型导入会被 esbuild 擦除,不进入浏览器 bundle)。
-import type { TokenUsageProjection } from '@deepseek-ai/dsh-token-meter/client'
+/**
+ * trajectory 请求的最小形状:新旧前端都提供,只声明本插件消费的字段。
+ * - 新前端(0.1.2-alpha+):ui-trajectory 把请求作为会话标准 hook
+ *   useTrajectory(trajectory 快照 .requests)提供,条目字段是
+ *   { startSeq, startedAt, provenance?, usage?, ... };
+ * - 旧前端(0.1.0-rc.x):会话快照 views.get('trajectory').requests,
+ *   字段一致(本插件的成本统计只依赖这些字段,不做完整类型绑定)。
+ * usage 走宽松读取(readUsage),不依赖官方类型。
+ */
+export interface InspectionRequest {
+  startSeq: number
+  startedAt: number
+  provenance?: { provider?: string; model?: string }
+  usage?: unknown
+}
+
+export interface RequestInspectionSnapshot {
+  requests: readonly InspectionRequest[]
+}
+
+/**
+ * tokenUsage 投影的最小形状:读全量 token 合计推算未观测历史的成本。
+ * 新旧前端该投影的字段一致(uncachedInputTokens/cacheReadTokens/
+ * cacheWriteTokens/outputTokens),宽松声明,不依赖官方类型。
+ */
+export interface TokenUsageProjection {
+  uncachedInputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  outputTokens: number
+}
 
 /** DeepSeek 官方 API 的 provider 路由名(host 注册的 provider id)。 */
 export const DEEPSEEK_PROVIDER = 'deepseek-official'
@@ -262,13 +289,15 @@ export interface CostSummary {
  */
 export function summarizeCost(
   snapshot: RequestInspectionSnapshot | undefined,
-  projection: TokenUsageProjection | undefined,
+  /** tokenUsage 投影:readProjection 做宽松字段校验,新(0.1.2-alpha+)/旧前端键名一致,unknown 兼容。 */
+  projection: unknown,
   stored: CostAccumulator,
 ): { summary: CostSummary | null; next: CostAccumulator } {
   const next = mergeAccumulator(stored, snapshot)
 
   // 窗口内最近一次请求(不限 provider)与最近一次 deepseek-official 请求。
-  let latestOverall: { provider: string; startedAt: number } | null = null
+  // provider 可能缺省(宽松形状),latestOverall 只携带需要的字段。
+  let latestOverall: { provider: string | undefined; startedAt: number } | null = null
   let latestDeepseek: { model: string; startedAt: number } | null = null
   for (const request of snapshot?.requests ?? []) {
     const provenance = request.provenance

@@ -15,6 +15,11 @@
 
 ![dsh-web-enhance in action: the floating button group (⬆ ⬇ 💡, the lightbulb toggle lit = thinking-chain default-expand on) at the bottom-right corner of a conversation, with the thinking chains expanded](https://raw.githubusercontent.com/yangzhe1991/dsh-web-enhance/main/screenshot.png)
 
+## Compatibility
+
+- **dsh ≥ 0.1.2-alpha.4** — supported since **0.1.5**. The restructured frontend provides the chat snapshot as the session-standard `useChat` hook and trajectory as `useTrajectory`; both are adapted, with the legacy paths retained for older dsh.
+- **dsh 0.1.0-rc.x** — still supported via the legacy snapshot paths.
+
 ## Features
 
 - 💡 **Thinking chain default-expand** — the third floating button (lightbulb icon) in the bottom-right corner, below the navigation pair:
