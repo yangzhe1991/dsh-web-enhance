@@ -48,7 +48,7 @@
 - 💰 **Session cost meter** — on the **same line as the built-in stats line, at its far left**, e.g. `≈ ¥0.83 · 2 turns 12 steps | …`:
 
   - Only rendered while the session's requests go through the **official DeepSeek API** (provider route `deepseek-official`); it disappears once you switch to another API.
-  - Cost = tokens × official unit prices (CNY, `deepseek-v4-flash` / `deepseek-v4-pro`), priced per request at its **actual time** with peak/off-peak rates (peak = Beijing time 09:00–12:00 and 14:00–18:00, twice the off-peak price), with cache-hit input at the discounted rate.
+  - Cost = tokens × official unit prices (CNY; all models currently on sale are covered: `deepseek-v4-flash` / `deepseek-v4-pro` / `deepseek-v4-flash-vision-exp`), priced per request at its **actual time** with peak/off-peak rates (peak = Beijing time 09:00–12:00 and 14:00–18:00, twice the off-peak price), with cache-hit input at the discounted rate.
   - **Accumulate as it happens**: every observed request is priced at its real time and persisted immediately (localStorage, per session, last-wins so nothing double-counts) — history paging pushing old requests out of the browser window does not matter. A session that has used this plugin since its creation has an **exact total for its whole life**, regardless of how long it gets.
   - Only history that was **never loaded** (before the plugin was installed, or on another machine) has no per-request data: its remainder is estimated at the current model's off-peak rate and marked with a `≈` prefix (hover for details: model, tokens, peak/off-peak request counts); clicking "Load earlier" to page that history in turns it exact.
   - The price table is updated in `src/client/cost.ts` whenever the official pricing page changes.

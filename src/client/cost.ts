@@ -59,7 +59,13 @@ export const DEEPSEEK_PROVIDER = 'deepseek-official'
 /**
  * 官网人民币价格表(元/百万 tokens),每个字段为 [闲时价, 峰时价]。
  * 数据源:https://api-docs.deepseek.com/zh-cn/quick_start/pricing
- * (官网改价时同步更新这里)。
+ * (官网改价/新模型时同步更新这里;2026-09-08 核对,在售 3 款)。
+ *
+ * 说明:2026-09-08 官网在售模型为 deepseek-v4-flash、
+ * deepseek-v4-pro、deepseek-v4-flash-vision-exp 三款,价格为:
+ * flash 与 vision-exp 同价(视觉模型仅对图片 token 按尺寸换算计费,
+ * 文本 token 单价与 flash 一致);pro 各档为 flash 的 3 倍。
+ * 官方 API 的 GET /models 只返回模型 id,不含价格,价格以官网页为准。
  */
 export interface ModelRates {
   /** 输入未命中缓存(普通输入)。 */
@@ -74,6 +80,7 @@ export interface ModelRates {
 export const DEEPSEEK_RATES: Readonly<Record<string, ModelRates>> = {
   'deepseek-v4-flash': { miss: [1.5, 3.0], hit: [0.05, 0.1], out: [4.5, 9.0] },
   'deepseek-v4-pro': { miss: [4.5, 9.0], hit: [0.15, 0.3], out: [13.5, 27.0] },
+  'deepseek-v4-flash-vision-exp': { miss: [1.5, 3.0], hit: [0.05, 0.1], out: [4.5, 9.0] },
 }
 
 /**
@@ -161,8 +168,10 @@ export interface CostAccumulator {
 }
 
 /**
- * localStorage 键前缀(按会话存)。价格表(DEEPSEEK_RATES)变更时
- * bump 版本号:旧累计器按旧价格算的 cost 作废,新键从零重新累计。
+ * localStorage 键前缀(按会话存)。价格表改价(同模型价格变化)时
+ * bump 版本号:旧累计器按旧价格算的 cost 作废,新键从零重新累计;
+ * 仅「新增模型」不必 bump,由 loadAccumulator 里的 migrateAccumulator
+ * 对旧 cost=0 条目补账即可。
  */
 const ACCUMULATOR_KEY_PREFIX = 'dsh-web-enhance.cost.v1.'
 
@@ -177,6 +186,10 @@ export function emptyAccumulator(): CostAccumulator {
 /**
  * 载入某会话的累计器:优先内存缓存,其次 localStorage;
  * 损坏/版本不符/不可用时回到空累计器。
+ *
+ * 载入时做一次「补账」迁移(见 migrateAccumulator):价格表新增模型后,
+ * 旧累计器里该模型的条目 cost 还是 0,需要在展示前按当前价格表重算,
+ * 否则用户看到的价格会一直是 0。
  */
 export function loadAccumulator(sessionId: string): CostAccumulator {
   const cached = accumulatorCache.get(sessionId)
@@ -193,9 +206,43 @@ export function loadAccumulator(sessionId: string): CostAccumulator {
   } catch {
     // localStorage 不可用(隐私模式)或数据损坏:当作没有历史累计
   }
-  const result = acc ?? emptyAccumulator()
+  const base = acc ?? emptyAccumulator()
+  const result = migrateAccumulator(base)
   accumulatorCache.set(sessionId, result)
+  // 迁移有变化时立即落盘(持久化补账结果);无变化返回原引用,不写。
+  if (result !== base) saveAccumulator(sessionId, result)
   return result
+}
+
+/**
+ * 累计器迁移:价格表新增模型后,旧累计器里该模型的条目是当时以
+ * 「未收录」记的 0 价(见 mergeAccumulator:未知模型 cost 记 0)。
+ * 这里用已存储的 token 分桶 + 峰谷标记按当前价格表重新计价,把
+ * 已观测历史从 0 修正为精确值;模型仍未收录的条目保持 0。
+ *
+ * 为什么不做整体版本 bump:版本 bump 的语义是「按旧价格算的 cost
+ * 作废、从零重来」,适用于同模型改价;本次只是新增模型,flash / pro
+ * 的价没变,它们的精确累计仍然有效,bump 会把有效数据白白降级成
+ * 「≈ 估算」。补账迁移幂等(重复执行结果一致),无变化返回原引用。
+ */
+export function migrateAccumulator(acc: CostAccumulator): CostAccumulator {
+  let changed = false
+  const entries: Record<string, CostEntry> = { ...acc.entries }
+  for (const [key, entry] of Object.entries(entries)) {
+    // 只重算「cost 为 0 且模型已收录」的条目:cost != 0 是当时按已收录
+    // 价格表的计价(依然有效);模型未收录则继续保持 0(等待下次收录)。
+    if (entry.cost !== 0 || DEEPSEEK_RATES[entry.model] === undefined) continue
+    const cost = requestCost(
+      { miss: entry.miss, hit: entry.hit, write: entry.write, out: entry.out },
+      entry.model,
+      entry.peak,
+    )
+    // requestCost 理论上非 null(上面已判模型收录),防御性跳过。
+    if (cost === null) continue
+    entries[key] = { ...entry, cost }
+    changed = true
+  }
+  return changed ? { version: 1, entries } : acc
 }
 
 /** 落盘某会话的累计器(localStorage 失败时只更新内存缓存,本次页面内仍累计)。 */
