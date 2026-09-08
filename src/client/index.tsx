@@ -20,7 +20,9 @@
  * 那行)正下方渲染一行「≈ ¥0.83」:已加载历史窗口内的请求逐条按真实
  * 时间戳分峰谷(北京时间 9-12、14-18 为峰时,价格为闲时 2 倍)、按模型
  * 单价精确计价;tokenUsage 投影里窗口外(未翻页加载)的历史没有时间戳,
- * 差额按当前模型闲时价估算并以「≈」前缀标示。算法见 cost.ts,价格表
+ * 差额按当前模型闲时价估算并以「≈」前缀标示。价格表未收录的模型(官网
+ * 新上线、插件价格表还没同步)按已知 DeepSeek 模型里最便宜的价格兜底
+ * 计价,同样计入「≈」并在悬停明细里如实标注。算法见 cost.ts,价格表
  * 数据源:https://api-docs.deepseek.com/zh-cn/quick_start/pricing
  *
  * 实现:注册到 conversation.session.header.actions(session 作用域,轮导航
@@ -525,6 +527,9 @@ function SessionCostMeter({ useSession, useTrajectory, useProjection, sessionId 
   if (summary === null || !summary.current) return null
 
   const inputTokens = summary.tokens.miss + summary.tokens.hit + summary.tokens.write
+  // 「≈」= 总价里含估算成分:未加载历史的差额,或价格表未收录的模型
+  // (按已知模型里最便宜的价格兜底)。两者都会让数字不是全精确。
+  const approx = summary.estimated > 0 || summary.unknownModels.length > 0
   const label = [
     `DeepSeek 官方 API(${DEEPSEEK_PROVIDER}) · 模型 ${summary.latestModel ?? '未知'}`,
     `输入 ${formatTokens(inputTokens)} · 输出 ${formatTokens(summary.tokens.out)}`,
@@ -532,13 +537,13 @@ function SessionCostMeter({ useSession, useTrajectory, useProjection, sessionId 
       ? `峰时 ${summary.peakCount} 次 · 闲时 ${summary.offpeakCount} 次(北京时间)`
       : null,
     summary.estimated > 0 ? '未加载历史差额按闲时价估算' : null,
-    summary.unknownModels.length > 0 ? `价格表未收录:${summary.unknownModels.join('、')}` : null,
+    summary.unknownModels.length > 0 ? `价格表未收录,按最低价估算:${summary.unknownModels.join('、')}` : null,
   ].filter((part): part is string => part !== null).join(' · ')
 
   return (
     <Tooltip label={label} side="top" delayMs={500}>
       <span className="dsh-webe-cost">
-        {summary.estimated > 0 ? '≈ ' : ''}{formatCostYuan(summary.total)}
+        {approx ? '≈ ' : ''}{formatCostYuan(summary.total)}
       </span>
     </Tooltip>
   )

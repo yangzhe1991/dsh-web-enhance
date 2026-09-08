@@ -17,7 +17,7 @@
 
 ## Compatibility
 
-- **dsh ≥ 0.1.2-alpha.4** — supported since **0.1.5**. The restructured frontend provides the chat snapshot as the session-standard `useChat` hook and trajectory as `useTrajectory`; both are adapted, with the legacy paths retained for older dsh. Verified against **dsh 0.1.3-alpha.2** since **0.1.8**.
+- **dsh ≥ 0.1.2-alpha.4** — supported since **0.1.5**. The restructured frontend provides the chat snapshot as the session-standard `useChat` hook and trajectory as `useTrajectory`; both are adapted, with the legacy paths retained for older dsh. Verified against **dsh 0.1.3-alpha.2** since **0.1.9**.
 - **dsh 0.1.0-rc.x** — still supported via the legacy snapshot paths.
 
 ## Features
@@ -49,8 +49,9 @@
 
   - Only rendered while the session's requests go through the **official DeepSeek API** (provider route `deepseek-official`); it disappears once you switch to another API.
   - Cost = tokens × official unit prices (CNY; all models currently on sale are covered: `deepseek-v4-flash` / `deepseek-v4-pro` / `deepseek-v4-flash-vision-exp`), priced per request at its **actual time** with peak/off-peak rates (peak = Beijing time **Monday–Friday** 09:00–12:00 and 14:00–18:00, twice the off-peak price; weekends are off-peak all day), with cache-hit input at the discounted rate.
+  - Models **missing from the price table** (just released upstream, or not yet synced here) are never dropped: they fall back to the **cheapest price among the known DeepSeek models**, and the hover detail says so ("not in the price table, estimated at the cheapest rate").
   - **Accumulate as it happens**: every observed request is priced at its real time and persisted immediately (localStorage, per session, last-wins so nothing double-counts) — history paging pushing old requests out of the browser window does not matter. A session that has used this plugin since its creation has an **exact total for its whole life**, regardless of how long it gets.
-  - Only history that was **never loaded** (before the plugin was installed, or on another machine) has no per-request data: its remainder is estimated at the current model's off-peak rate and marked with a `≈` prefix (hover for details: model, tokens, peak/off-peak request counts); clicking "Load earlier" to page that history in turns it exact.
+  - Only history that was **never loaded** (before the plugin was installed, or on another machine) has no per-request data: its remainder is estimated at the current model's off-peak rate (the cheapest-rate fallback applies here too when the model is unknown); together with any fallback-priced models this marks the total with a `≈` prefix (hover for details: model, tokens, peak/off-peak request counts, unknown models). Clicking "Load earlier" to page that history in turns the remainder exact.
   - The price table is updated in `src/client/cost.ts` whenever the official pricing page changes.
 
 ## Install (30 seconds)

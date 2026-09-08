@@ -7,7 +7,10 @@
  * - 每条请求按真实时间戳分峰谷计价:峰时 = 北京时间周一至周五
  *   9:00-12:00、14:00-18:00(价格为闲时的 2 倍),其余(含周末)为闲时;
  * - 输入分「缓存命中」(折扣价)与「缓存未命中」两档,输出(含思考
- *   内容)按输出价计;缓存写入 token 按未命中价计(DeepSeek 不单列)。
+ *   内容)按输出价计;缓存写入 token 按未命中价计(DeepSeek 不单列);
+ * - 模型不在已知价格表里(如官网刚上线、插件价格表还没同步的模型)时,
+ *   按已知 DeepSeek 模型里**最便宜**的价格兜底计价(见 CHEAPEST_RATES),
+ *   而不是记 0 价 —— 宁可略微低估,也不让新模型的用量白算。
  *
  * 数据源与「边发生边累计」:
  * - trajectory 视图(session.views.get('trajectory')的 requests)逐请求带
@@ -84,6 +87,41 @@ export const DEEPSEEK_RATES: Readonly<Record<string, ModelRates>> = {
 }
 
 /**
+ * 兜底价:价格表未收录的模型按「已知 DeepSeek 模型里最便宜的价格」计。
+ *
+ * 逐档(未命中输入 / 命中输入 / 输出)取所有已收录模型的最小值,而不是
+ * 硬编码某个模型名 —— 以后官网调价或新增模型时,兜底价自动跟着价格表
+ * 走,不会出现「表里已经更便宜了、兜底价还是老价」的脱节。当前表里
+ * flash 与 vision-exp 同价且三档都最低,所以兜底价 = flash 价。
+ *
+ * 为什么逐档取最小、而不是「挑一个最便宜的模型」:三档单价互相独立,
+ * 并不存在一个统一的「模型便宜程度」排序键;逐档取最小既是对「最便宜
+ * 的价格」最直白的解释,也避免为排序键另造一套口径。代价是极端情况下
+ * 可能混合多个模型的档位(实际不会:最低价都来自同一个模型),且属于
+ * **偏低估**的估算口径。
+ */
+export const CHEAPEST_RATES: ModelRates = cheapestRates(DEEPSEEK_RATES)
+
+/** 从一张价格表里算出逐档最低价(兜底价的计算,导出仅供独立验证)。 */
+export function cheapestRates(table: Readonly<Record<string, ModelRates>>): ModelRates {
+  const rows = Object.values(table)
+  // 表为空理论上不会发生(常量表非空),防御性返回全 0:宁可算出 0 元,
+  // 也不要 Math.min() 得到 Infinity 污染累计器。
+  if (rows.length === 0) return { miss: [0, 0], hit: [0, 0], out: [0, 0] }
+  /** 取某一档(闲时价/峰时价两列分别取最小)。 */
+  const pick = (select: (rates: ModelRates) => readonly [number, number]): readonly [number, number] => [
+    Math.min(...rows.map((rates) => select(rates)[0])),
+    Math.min(...rows.map((rates) => select(rates)[1])),
+  ]
+  return { miss: pick((rates) => rates.miss), hit: pick((rates) => rates.hit), out: pick((rates) => rates.out) }
+}
+
+/** 取某模型的单价:未收录在价格表里时回退到 CHEAPEST_RATES(最便宜价兜底)。 */
+export function ratesFor(model: string): ModelRates {
+  return DEEPSEEK_RATES[model] ?? CHEAPEST_RATES
+}
+
+/**
  * 时间戳(Unix epoch ms)是否落在北京时间的峰时。
  * 官网口径:高峰时段为北京时间**周一至周五** 9:00-12:00、
  * 14:00-18:00,其余时间(含周六周日全天)为闲时。
@@ -135,11 +173,11 @@ export function readProjection(value: unknown): UsageTokens | null {
 
 /**
  * 一条请求的费用(元):token × 单价,峰值按峰时价。
- * 模型未收录在价格表时返回 null(调用方记入 unknownModels,不硬猜价格)。
+ * 模型未收录在价格表时按 CHEAPEST_RATES(已知模型里最便宜的价格)计,
+ * 因此永远有价可算、不再返回 null —— 调用方不必再处理「算不出来」。
  */
-export function requestCost(tokens: UsageTokens, model: string, peak: boolean): number | null {
-  const rates = DEEPSEEK_RATES[model]
-  if (rates === undefined) return null
+export function requestCost(tokens: UsageTokens, model: string, peak: boolean): number {
+  const rates = ratesFor(model)
   const i = peak ? 1 : 0
   // 缓存写入没有单独价格,按未命中输入价计(保守口径)。
   return (tokens.miss * rates.miss[i] + tokens.hit * rates.hit[i] + tokens.write * rates.miss[i] + tokens.out * rates.out[i]) / 1e6
@@ -156,12 +194,22 @@ export interface CostEntry {
   hit: number
   write: number
   out: number
-  /** 请求模型(用于明细;未收录时 cost 为 0)。 */
+  /** 请求模型(用于明细)。 */
   model: string
   /** 请求是否发生在峰时(按请求真实时间)。 */
   peak: boolean
-  /** 按提交时价格表精确计算的费用(元)。 */
+  /** 按提交时价格表计算的费用(元)。 */
   cost: number
+  /**
+   * 是否按兜底价(CHEAPEST_RATES,未收录模型的最便宜价)计价。
+   * 只在未收录模型上写 true(收录模型不写该字段,保持持久化 JSON 精简)。
+   *
+   * 为什么要标记而不是靠 cost === 0 判断:上一版把未收录模型记成 0 价,
+   * 补账迁移能用「cost 为 0」认出它们;现在未收录模型也有非 0 的兜底价,
+   * 必须显式标记,迁移才能在「模型后来被收录进价格表」时把它们按新价
+   * 重算(历史教训:vision-exp 上线时正是靠补账把 0 价条目修正的)。
+   */
+  est?: boolean
 }
 
 /**
@@ -194,9 +242,9 @@ export function emptyAccumulator(): CostAccumulator {
  * 载入某会话的累计器:优先内存缓存,其次 localStorage;
  * 损坏/版本不符/不可用时回到空累计器。
  *
- * 载入时做一次「补账」迁移(见 migrateAccumulator):价格表新增模型后,
- * 旧累计器里该模型的条目 cost 还是 0,需要在展示前按当前价格表重算,
- * 否则用户看到的价格会一直是 0。
+ * 载入时做一次「补账」迁移(见 migrateAccumulator):价格表变化后,旧累计器
+ * 里按兜底价/0 价记的条目需要在展示前按当前价格表重算,否则用户看到的
+ * 价格会一直是旧值。
  */
 export function loadAccumulator(sessionId: string): CostAccumulator {
   const cached = accumulatorCache.get(sessionId)
@@ -222,31 +270,40 @@ export function loadAccumulator(sessionId: string): CostAccumulator {
 }
 
 /**
- * 累计器迁移:价格表新增模型后,旧累计器里该模型的条目是当时以
- * 「未收录」记的 0 价(见 mergeAccumulator:未知模型 cost 记 0)。
- * 这里用已存储的 token 分桶 + 峰谷标记按当前价格表重新计价,把
- * 已观测历史从 0 修正为精确值;模型仍未收录的条目保持 0。
+ * 累计器迁移(载入时补账):把「当时没价或按兜底价算的条目」用当前价格表
+ * 重算。两类条目需要重算:
  *
- * 为什么不做整体版本 bump:版本 bump 的语义是「按旧价格算的 cost
- * 作废、从零重来」,适用于同模型改价;本次只是新增模型,flash / pro
- * 的价没变,它们的精确累计仍然有效,bump 会把有效数据白白降级成
+ * 1. `est === true` —— 当时模型未收录,按兜底价(最便宜价)计的。之后
+ *    模型被收录进价格表(用模型自己的价),或兜底价随价格表变化(官网
+ *    调价/新增更便宜的模型),都要按新价修正;
+ * 2. `cost === 0` —— 0.1.8 及以前对未收录模型记的 0 价(那时没有 est
+ *    标记),首次载入本版时补成兜底价。
+ *
+ * 其余条目(cost > 0 且非兜底价)是当时按已收录价格表算的精确值,不动。
+ *
+ * 为什么不做整体版本 bump:版本 bump 的语义是「按旧价格算的 cost 作废、
+ * 从零重来」,适用于同模型改价;本次只是「未收录 → 有兜底价」以及
+ * 「兜底价可能变化」,精确条目依然有效,bump 会把有效数据白白降级成
  * 「≈ 估算」。补账迁移幂等(重复执行结果一致),无变化返回原引用。
  */
 export function migrateAccumulator(acc: CostAccumulator): CostAccumulator {
   let changed = false
   const entries: Record<string, CostEntry> = { ...acc.entries }
   for (const [key, entry] of Object.entries(entries)) {
-    // 只重算「cost 为 0 且模型已收录」的条目:cost != 0 是当时按已收录
-    // 价格表的计价(依然有效);模型未收录则继续保持 0(等待下次收录)。
-    if (entry.cost !== 0 || DEEPSEEK_RATES[entry.model] === undefined) continue
+    if (entry.est !== true && entry.cost !== 0) continue
+    // 当前价格表下该模型是否仍未收录 → 决定新的 est 标记。
+    const est = DEEPSEEK_RATES[entry.model] === undefined
     const cost = requestCost(
       { miss: entry.miss, hit: entry.hit, write: entry.write, out: entry.out },
       entry.model,
       entry.peak,
     )
-    // requestCost 理论上非 null(上面已判模型收录),防御性跳过。
-    if (cost === null) continue
-    entries[key] = { ...entry, cost }
+    // 幂等:价格没变、标记也没变时不动这个条目(否则每次载入都要落盘)。
+    if (cost === entry.cost && est === (entry.est ?? false)) continue
+    const next: CostEntry = { ...entry, cost }
+    if (est) next.est = true
+    else delete next.est
+    entries[key] = next
     changed = true
   }
   return changed ? { version: 1, entries } : acc
@@ -284,15 +341,21 @@ export function mergeAccumulator(acc: CostAccumulator, snapshot: RequestInspecti
     const key = String(request.startSeq)
     const peak = isPeakHour(request.startedAt)
     const model = provenance.model ?? ''
-    const cost = requestCost(tokens, model, peak) ?? 0
+    // 未收录的模型(含 model 缺失)按最便宜价兜底,并打上 est 标记,
+    // 供以后「模型被收录/兜底价变化」时补账重算。
+    const est = DEEPSEEK_RATES[model] === undefined
+    const cost = requestCost(tokens, model, peak)
     const prev = entries[key]
     if (prev !== undefined
       && prev.miss === tokens.miss && prev.hit === tokens.hit
       && prev.write === tokens.write && prev.out === tokens.out
-      && prev.model === model && prev.peak === peak && prev.cost === cost) {
+      && prev.model === model && prev.peak === peak && prev.cost === cost
+      && (prev.est ?? false) === est) {
       continue
     }
-    entries[key] = { miss: tokens.miss, hit: tokens.hit, write: tokens.write, out: tokens.out, model, peak, cost }
+    const entry: CostEntry = { miss: tokens.miss, hit: tokens.hit, write: tokens.write, out: tokens.out, model, peak, cost }
+    if (est) entry.est = true
+    entries[key] = entry
     changed = true
   }
   // 无变化返回原引用;有变化克隆一份(旧引用只可能被改成相同内容,无害)。
@@ -301,10 +364,11 @@ export function mergeAccumulator(acc: CostAccumulator, snapshot: RequestInspecti
 
 /**
  * 一个完整会话的价格统计结果。
- * - exact:累计器里所有已观测请求的精确费用之和(元,会话从创建起
- *   就用本插件时,这部分就是全程精确价,不受历史分页影响);
+ * - exact:累计器里所有已观测请求的费用之和(元;已收录模型为精确价,
+ *   未收录模型按兜底价估算,见 unknownModels)。会话从创建起就用本插件
+ *   时,这部分就是全程价,不受历史分页影响;
  * - estimated:从未被观测过的历史(装插件之前/其它设备/被截断的流)
- *   的差额,按当前模型闲时价估算;
+ *   的差额,按当前模型闲时价估算(当前模型未收录时同样走兜底价);
  * - tokens:展示用的全量 token(优先 tokenUsage 投影,缺失时用累计器合计);
  * - latestModel / peakCount / offpeakCount / unknownModels:明细展示用。
  */
@@ -314,7 +378,7 @@ export interface CostSummary {
    * DeepSeek 官方 API。为 false 时组件不渲染(当前已换到其它 provider)。
    */
   current: boolean
-  /** 精确计价部分(元,累计器合计)。 */
+  /** 累计计价部分(元,累计器合计;含未收录模型的兜底价估算)。 */
   exact: number
   /** 估算差额部分(元,从未观测过的历史)。 */
   estimated: number
@@ -327,7 +391,7 @@ export interface CostSummary {
   /** 累计器里已观测请求的峰时/闲时条数。 */
   peakCount: number
   offpeakCount: number
-  /** 累计器里出现过但价格表未收录的模型(其 token 未计入价格)。 */
+  /** 累计器里出现过但价格表未收录的模型(已按兜底价估算,UI 里如实标注)。 */
   unknownModels: readonly string[]
 }
 
@@ -339,6 +403,7 @@ export interface CostSummary {
  * - 差额 = 投影全量 - 累计器合计(而非窗口合计),按桶相减、负值截 0:
  *   已观测过的请求即使被分页挤出窗口也不进差额;差额里混入其它
  *   provider 的 token 时无法拆分,UI 文案里如实说明按闲时价估算;
+ *   当前模型未收录时按兜底价(最便宜价)估算;
  * - next 与入参同引用 = 窗口没有新计价记录(组件凭此跳过落盘)。
  */
 export function summarizeCost(
@@ -364,7 +429,7 @@ export function summarizeCost(
     }
   }
 
-  // 累计器合计:所有已观测请求的精确费用与 token。
+  // 累计器合计:所有已观测请求的费用与 token。
   const seen: UsageTokens = { miss: 0, hit: 0, write: 0, out: 0 }
   let exact = 0
   let peakCount = 0
@@ -378,7 +443,9 @@ export function summarizeCost(
     exact += entry.cost
     if (entry.peak) peakCount += 1
     else offpeakCount += 1
-    if (entry.cost === 0 && entry.model !== '' && DEEPSEEK_RATES[entry.model] === undefined) {
+    // 未收录模型现在也有价(兜底价),不能再靠 cost === 0 认;空模型名
+    // 只兜底计价、不进明细列表(拼进文案会是一串空白,没意义)。
+    if (entry.model !== '' && DEEPSEEK_RATES[entry.model] === undefined) {
       unknownModels.add(entry.model)
     }
   }
@@ -395,11 +462,12 @@ export function summarizeCost(
     out: Math.max(0, all.out - seen.out),
   }
 
-  // 差额一律按「当前模型闲时价」估算;当前模型未收录时放弃估算。
+  // 差额一律按「当前模型闲时价」估算;当前模型未收录时走兜底价(最便宜
+  // 价),与逐请求计价口径一致 —— 不再因为「模型不认识」就放弃估算。
   let estimated = 0
   const model = latestDeepseek?.model ?? ''
-  if (gap !== null && DEEPSEEK_RATES[model] !== undefined) {
-    estimated = requestCost(gap, model, false) ?? 0
+  if (gap !== null) {
+    estimated = requestCost(gap, model, false)
   }
 
   const tokens: UsageTokens = all ?? seen
