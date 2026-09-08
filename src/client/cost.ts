@@ -4,8 +4,8 @@
  *
  * 口径(与官网「模型 & 价格」页一致,人民币 元/百万 tokens):
  * - 只统计走 DeepSeek 官方 API(provider 路由 `deepseek-official`)的请求;
- * - 每条请求按真实时间戳分峰谷计价:峰时 = 北京时间 9:00-12:00、
- *   14:00-18:00(价格为闲时的 2 倍),其余时段为闲时;
+ * - 每条请求按真实时间戳分峰谷计价:峰时 = 北京时间周一至周五
+ *   9:00-12:00、14:00-18:00(价格为闲时的 2 倍),其余(含周末)为闲时;
  * - 输入分「缓存命中」(折扣价)与「缓存未命中」两档,输出(含思考
  *   内容)按输出价计;缓存写入 token 按未命中价计(DeepSeek 不单列)。
  *
@@ -85,10 +85,17 @@ export const DEEPSEEK_RATES: Readonly<Record<string, ModelRates>> = {
 
 /**
  * 时间戳(Unix epoch ms)是否落在北京时间的峰时。
- * 峰时 = 北京时间 9:00-12:00、14:00-18:00(官网口径,其余为闲时)。
+ * 官网口径:高峰时段为北京时间**周一至周五** 9:00-12:00、
+ * 14:00-18:00,其余时间(含周六周日全天)为闲时。
  */
 export function isPeakHour(ms: number): boolean {
-  const hour = Math.floor(ms / 3600000 + 8) % 24
+  // 北京时间 = UTC+8(中国无夏令时),加 8 小时后用 UTC 方法读取的
+  // 墙钟时刻即北京本地时刻(日、小时都准)。
+  const bj = new Date(ms + 8 * 3600000)
+  const day = bj.getUTCDay() // 0=周日 ... 6=周六
+  const hour = bj.getUTCHours()
+  // 周末全天闲时:官网峰时仅限周一至周五(2026-09-08 核对原文)。
+  if (day === 0 || day === 6) return false
   return (hour >= 9 && hour < 12) || (hour >= 14 && hour < 18)
 }
 
