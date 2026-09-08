@@ -15,6 +15,11 @@
 
 ![dsh-web-enhance 实际效果:对话右下角的悬浮按钮组(⬆ ⬇ 💡,灯泡高亮表示思维链默认展开已开启),思维链已全部展开](https://raw.githubusercontent.com/yangzhe1991/dsh-web-enhance/main/screenshot.png)
 
+## 兼容性
+
+- **dsh ≥ 0.1.2-alpha.4** — 自 **0.1.5** 起支持。重构后的前端以会话标准的 `useChat` hook 提供聊天快照、以 `useTrajectory` 提供轨迹,两条均已适配;旧版 dsh 保留 legacy 路径。自 **0.1.8** 起在 **dsh 0.1.3-alpha.2** 上验证通过。
+- **dsh 0.1.0-rc.x** — 仍通过旧版快照路径支持。
+
 ## 功能
 
 - 💡 **思维链默认展开** —— 悬浮按钮组里、导航按钮下方的第三个按钮(灯泡图标):

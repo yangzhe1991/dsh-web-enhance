@@ -13,8 +13,11 @@ import { build } from 'esbuild'
 
 const PLUGIN_ID = '@yangzhe1991/dsh-web-enhance'
 
-// 浏览器半的 externals:必须是平台模块表(CLIENT_EXTERNALS)中的成员,
-// 否则 require 会在运行时抛错。详见 dsh 仓库 packages/client/tsdown.client.ts。
+// 浏览器半的 externals:必须是平台模块表(PLATFORM_MODULES,见 dsh 仓库
+// packages/client/web/src/platform.ts)成员,否则 require 会在运行时抛错。
+// 只列实际会出现在产物里的 require:值导入(如 ui-primitives、react)
+// 与可能被误用的基线成员;类型导入会被 esbuild 擦除,无需列入。
+// 注意:@deepseek-ai/dsh-client-runtime 已随 dsh 0.1.2 停产,不再是模块表成员。
 const CLIENT_EXTERNALS = [
   'react',
   'react/jsx-runtime',
@@ -22,12 +25,7 @@ const CLIENT_EXTERNALS = [
   'react-dom/client',
   '@deepseek-ai/cordis',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-ui-attachment',
-  '@deepseek-ai/dsh-client-schema-form',
-  // 文档化豁免:snapshot-store 引擎在 runtime/client 里,属模块表成员。
-  '@deepseek-ai/dsh-client-runtime/client',
 ]
 
 // —— node 半 ——
@@ -72,7 +70,7 @@ await writeFile('lib/types/index.d.ts', [
 ].join('\n'))
 await writeFile('lib/types/client/index.d.ts', [
   '/** dsh-web-enhance 插件,浏览器半。 */',
-  "import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';",
+  "import type { Context as ClientContext } from '@deepseek-ai/cordis';",
   '/** 需要的 client 服务:sessions、slots。 */',
   'export declare const inject: string[];',
   '/** Client 插件 body。 */',

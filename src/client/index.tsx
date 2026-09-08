@@ -39,7 +39,11 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+// 官方模式:ClientContext 就是 cordis 的 Context(服务经声明合并挂在上面)。
+// 旧版本从这里导入过 @deepseek-ai/dsh-client-runtime/client,该包已随 dsh 0.1.2 停产。
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+// 声明合并:ctx.slots 由 ui-renderer 挂载到 cordis Context(官方同款导入)。
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import {
   IconChevronDownOutline14,
   IconChevronUpOutline14,

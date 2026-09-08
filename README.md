@@ -17,7 +17,7 @@
 
 ## Compatibility
 
-- **dsh ≥ 0.1.2-alpha.4** — supported since **0.1.5**. The restructured frontend provides the chat snapshot as the session-standard `useChat` hook and trajectory as `useTrajectory`; both are adapted, with the legacy paths retained for older dsh.
+- **dsh ≥ 0.1.2-alpha.4** — supported since **0.1.5**. The restructured frontend provides the chat snapshot as the session-standard `useChat` hook and trajectory as `useTrajectory`; both are adapted, with the legacy paths retained for older dsh. Verified against **dsh 0.1.3-alpha.2** since **0.1.8**.
 - **dsh 0.1.0-rc.x** — still supported via the legacy snapshot paths.
 
 ## Features
