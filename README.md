@@ -12,12 +12,13 @@
 - **Turn-by-turn conversation navigation** — a floating button pair in the bottom-right corner of the conversation that jumps to the start of the turn you are reading (or the previous turn's start) and to the end of the current turn (or the next turn's end) — always landing on the actual reply text, with reasoning, tool calls, and transition sentences skipped.
 - **Thinking chain default-expand** — a toggle (the lightbulb button, on by default) that automatically expands every "Think" reasoning disclosure in the conversation, so the full thinking chain is visible while streaming instead of a one-line summary.
 - **Session cost meter** — when a session runs on the official DeepSeek API, an estimated session cost (CNY) is shown at the far left of the same line as the built-in input/output token stats, priced per request at the real peak/off-peak hour using the official pricing page rates.
+- **Open files in the system app** — clicking a file path in the conversation hands it to your desktop default application (VS Code, text editor, …) instead of popping the right sidebar. Can be turned off in Settings → General.
 
 ![dsh-web-enhance in action: the floating button group (⬆ ⬇ 💡, the lightbulb toggle lit = thinking-chain default-expand on) at the bottom-right corner of a conversation, with the thinking chains expanded](https://raw.githubusercontent.com/yangzhe1991/dsh-web-enhance/main/screenshot.png)
 
 ## Compatibility
 
-- **dsh ≥ 0.1.2-alpha.4** — supported since **0.1.5**. The restructured frontend provides the chat snapshot as the session-standard `useChat` hook and trajectory as `useTrajectory`; both are adapted, with the legacy paths retained for older dsh. Verified against **dsh 0.1.3-alpha.2** since **0.1.9**.
+- **dsh ≥ 0.1.2-alpha.4** — supported since **0.1.5**. The restructured frontend provides the chat snapshot as the session-standard `useChat` hook and trajectory as `useTrajectory`; both are adapted, with the legacy paths retained for older dsh. Verified against **dsh 0.1.3-alpha.2** since **0.1.9**, and against **dsh 0.1.5-rc.2** since **0.1.10** (the release that adds "Open files in the system app", verified end-to-end on a real desktop).
 - **dsh 0.1.0-rc.x** — still supported via the legacy snapshot paths.
 
 ## Features
@@ -53,6 +54,14 @@
   - **Accumulate as it happens**: every observed request is priced at its real time and persisted immediately (localStorage, per session, last-wins so nothing double-counts) — history paging pushing old requests out of the browser window does not matter. A session that has used this plugin since its creation has an **exact total for its whole life**, regardless of how long it gets.
   - Only history that was **never loaded** (before the plugin was installed, or on another machine) has no per-request data: its remainder is estimated at the current model's off-peak rate (the cheapest-rate fallback applies here too when the model is unknown); together with any fallback-priced models this marks the total with a `≈` prefix (hover for details: model, tokens, peak/off-peak request counts, unknown models). Clicking "Load earlier" to page that history in turns the remainder exact.
   - The price table is updated in `src/client/cost.ts` whenever the official pricing page changes.
+
+- 📂 **Open files in the system app** (on by default) — clicking a file no longer pops the right sidebar:
+
+  - **Why**: since dsh 0.1.5, file paths in the transcript and in tool rows are hard-wired to the right sidebar's document-preview tab (literally `ctx.sidebarRight.openResource(...)` in the shipped source, with no setting to disable it), so glancing at a file means the sidebar pushes in and squeezes the conversation.
+  - **What this plugin does**: it intercepts that open and hands the **absolute path** to the host's native `session.openWorkspacePath`, which opens the file in your **desktop default application** — the same thing as double-clicking it in Finder/Explorer. The conversation column stays put; the sidebar stays closed.
+  - **Only file clicks are intercepted**: the sidebar's own navigation (the file tree, the guide page, tab menus) keeps working exactly as before, so you can still open a file into the official preview from the file tree; non-file resources such as image attachments are untouched.
+  - **Falls back when it cannot open**: on a remote-only browser (no host desktop) or when the host refuses, the click falls back to the official sidebar preview — never a dead click.
+  - **Toggle**: Settings → General → "Open files in the system app"; takes effect immediately and persists across reloads.
 
 ## Install (30 seconds)
 

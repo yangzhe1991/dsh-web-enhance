@@ -52,8 +52,16 @@ import {
   IconThinkOutline14,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-// 触发 SlotMap 声明合并:conversation.session.header.actions 由 conversation 声明。
+// 触发 SlotMap / Context 声明合并:
+// - conversation 声明 conversation.session.header.actions 与 ctx.sessions;
+// - settings 声明 settings.general.item;
+// - sidebar-right 声明 ctx.sidebarRight / ctx.sidebarRightTabs;
+// - api-remotes 声明 ctx.remote(远端命名空间)。
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import type {} from '@deepseek-ai/dsh-api-remotes/client'
+import type {} from '@deepseek-ai/dsh-client-locale/client'
 import {
   DEEPSEEK_PROVIDER,
   formatCostYuan,
@@ -63,6 +71,13 @@ import {
   summarizeCost,
 } from './cost'
 import type { RequestInspectionSnapshot } from './cost'
+// 功能四:点文件交系统默认程序打开(拦截 ctx.sidebarRight.openResource)。
+import {
+  NativeOpenRow,
+  installNativeFileOpen,
+  registerNativeOpenCopy,
+  setNativeOpenText,
+} from './open-native'
 
 /** 注入的 <style> 是否已存在(按钮样式,避免重复注入)。 */
 let styleInjected = false
@@ -151,6 +166,38 @@ const BUTTON_CSS = `
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* 设置「通用」分区里的功能行(功能四):标题 + 说明两行,右侧开关。
+   排版照官方功能行(row / rowText / title / desc),类名自带前缀,
+   不与官方模块类耦合。 */
+/* 分隔线与内边距照官方功能行(lats3W_row:.5px 下边框 + 16px 上下内边距),
+   否则一行没有分隔线的设置项在「通用设置」页里会被当成不存在的空白。 */
+.dsh-webe-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  width: 100%;
+  padding: 16px 0;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+.dsh-webe-setting-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+  padding-right: 48px;
+}
+.dsh-webe-setting-title {
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 22px;
+}
+.dsh-webe-setting-desc {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 20px;
+}
 `
 
 /** 全局注入一次按钮样式(浏览器端 bundle 的模块级副作用)。 */
@@ -220,8 +267,9 @@ function expandThinkRowsWithin(root: ParentNode): void {
 /** 需要的 client 服务:sessions(会话数据)、slots(slot 注册)。 */
 export const inject = ['sessions', 'slots']
 
-/** Client 插件 body:注册 header 按钮组与 composer.dock 价格行。 */
+/** Client 插件 body:注册 header 按钮组、composer.dock 价格行、设置开关行,并接管文件点击。 */
 export function apply(ctx: ClientContext): void {
+  ensureStyle()
   ctx.slots.inject(
     'conversation.session.header.actions',
     () => ctx.slots.register({
@@ -243,17 +291,167 @@ export function apply(ctx: ClientContext): void {
       order: 10,
     }, SessionCostMeter),
   )
+  registerNativeOpenRow(ctx)
+  installNativeFileOpenFeature(ctx)
 }
 
-// —— 数据契约:chat 快照与节点结构 ——
-//
-// 节点类型(来自 dsh-client-runtime / ui-conversation 的 Chat 快照):
-// - kind 'assistant':整个回复节点,自身带 blocks 字段(AssistantMessageNode);
-// - kind 'assistant-step':按 step 拆分的回复节点,blocks 在 data 里
-//   (官方 projectAssistant 的 data.blocks)。
-// blocks 元素是 AssistantBlock:{ kind: 'text'|'reasoning'|'image'|'tool-call'|'other', text? }。
-// chat 快照:order 为渲染顺序,nodes 为 key → 节点,locations.getTurn(turn)
-// 为该轮节点 key 序列,timeline.turnOrder 为轮序。
+/**
+ * 功能四的设置行:在 `apply()` 里**无条件注册**,不等任何服务。
+ *
+ * 早期版本把这行注册在「服务齐了」的回调里,结果是只要有一个服务没到位
+ * (或该回调因为别的原因没跑),开关就整行消失 —— 而开关是用户唯一能看见
+ * 的功能入口,不该被无关链路的时序绑架。现在:
+ * - 行立即出现,文案默认走插件内置中文;
+ * - locale 服务可用后再注册词典并用 `setText` 换成当前语言,组件不重挂载。
+ */
+function registerNativeOpenRow(ctx: ClientContext): void {
+  ctx.slots.inject(
+    'settings.general.item',
+    () => {
+      return ctx.slots.register({
+        name: 'settings.general.item',
+        id: 'web-enhance-native-open',
+        // 官方功能行:transcript-view=12、composer-enter=20。
+        // 取 14:紧跟转写视图行之后,且不与任何现有条目并列。
+        order: 14,
+      }, NativeOpenRow)
+    },
+  )
+  ctx.inject(['locale'], (scoped: ClientContext) => {
+    setNativeOpenText(registerNativeOpenCopy(scoped.locale))
+  })
+}
+
+/**
+ * 功能四的拦截装配:就地把 `ctx.sidebarRight.openResource` 包一层,点文件交
+ * 系统默认程序打开。
+ *
+ * 服务读取用 `ctx.inject([...], cb)`:这件事依赖别的插件提供的服务
+ * (`sidebarRight` / `sidebarRightTabs` 来自 ui-sidebar-right,`remote` 来自
+ * api-remotes),加载顺序不保证;带服务名的 inject 在服务齐了才触发回调,任一
+ * 服务缺失时回调永不触发 —— 结果是拦截静默缺席(点文件回官方右栏)、其余功能
+ * 照常,而不是在 undefined 上炸掉整棵组合树。
+ *
+ * 只等 `remote` 这一层:远端命名空间服务(`ctx.remote.session`)由 api-remotes
+ * 挂载贡献时创建,可能晚于 `remote` 本身出现;拿不到时 installNativeFileOpen
+ * 会走「host 不支持」这条已有的回退路径,不会报错。
+ */
+function installNativeFileOpenFeature(ctx: ClientContext): void {
+  // 装配约束(三次踩坑后的硬规则):
+  // 1) 绝不用 `ctx.get()` 探测服务(未声明即抛,会让整页加载失败);
+  // 2) 只用 `ctx.inject([...], cb)` 等待依赖 —— 但它**静默**:依赖不齐就永不触发;
+  // 3) 因此必须有「迟到再试」与「自我修复」:装配没成功时监听服务到达事件重试,
+  //    并把最终状态写到 DOM 属性上,不再只依赖 Console;
+  // 4) 每一步都 try/catch:cordis 会把 step 里的异常吞掉,不接住就完全无痕。
+  const state = { tier: -1, installed: false, error: '' }
+  const publish = (): void => {
+    try {
+      document.documentElement.dataset.dshWebeOpenNative = JSON.stringify(state)
+    } catch {
+      // 非浏览器环境(探针)忽略
+    }
+  }
+  publish()
+
+  const tiers: readonly (readonly string[])[] = [
+    ['sidebarRight', 'sessions'],
+    ['sidebarRight', 'sidebarRightTabs', 'sessions'],
+  ]
+  const triedTiers = new Set<number>()
+  const signal = new AbortController()
+  let installed = false
+  let disposed = false
+  ctx.effect(() => () => {
+    disposed = true
+    signal.abort()
+  }, 'web-enhance: native file open lifetime')
+
+  const attemptTier = (index: number): void => {
+    if (disposed || installed || triedTiers.has(index)) return
+    const tier = tiers[index]
+    if (tier === undefined) return
+    triedTiers.add(index)
+    try {
+      ctx.inject(tier, (scoped: ClientContext) => {
+        if (disposed || installed) return
+        try {
+          // 只读**本级已声明**的服务:读未声明的服务名会被 cordis 直接抛错
+          // (`cannot get property "x" without inject`)——那是我前面整页崩溃的
+          // 同一个坑。tier 0 只声明了 sidebarRight+sessions,就不能碰
+          // sidebarRightTabs;缺注册表时按「文档预览」这一默认 kind 判定。
+          const sidebarRight = scoped.sidebarRight
+          const sessions = scoped.sessions
+          const sidebarRightTabs = tier.includes('sidebarRightTabs') ? scoped.sidebarRightTabs : undefined
+          const handle = installNativeFileOpen(
+            sidebarRight,
+            sidebarRightTabs,
+            sessions,
+            signal.signal,
+          )
+          if (handle === undefined) {
+            state.error = `tier ${String(index)}: sidebarRight.openResource 不是函数 (${typeof scoped.sidebarRight?.openResource})`
+            publish()
+            console.warn('[dsh-web-enhance] 接管失败,点文件仍走官方右栏:', state.error)
+            return
+          }
+          installed = true
+          state.tier = index
+          state.installed = true
+          state.error = ''
+          publish()
+          // 唯一保留的常规日志:装上了(排查时看这一行即可确认功能在用)
+          console.info(`[dsh-web-enhance] 点文件改用系统默认程序打开:已接管(依赖集合=${tier.join('+')})`)
+          scoped.effect(() => () => handle.dispose(), 'web-enhance: native file open')
+        } catch (error) {
+          state.error = `tier ${String(index)} 装配抛异常: ${error instanceof Error ? error.message : String(error)}`
+          publish()
+          console.debug('[dsh-web-enhance] 该级装配未成功,继续尝试其它组合:', error)
+        }
+      })
+    } catch (error) {
+      // ctx.inject 本身抛错(例如上下文已失效):记下来,别静默
+      state.error = `tier ${String(index)}: ctx.inject 抛错 ${error instanceof Error ? error.message : String(error)}`
+      publish()
+      console.warn('[dsh-web-enhance] ctx.inject 抛错', error)
+    }
+  }
+
+  // 依赖就绪即装配(正常路径)
+  attemptTier(0)
+  setTimeout(() => attemptTier(1), 1200)
+
+  // 自我修复:任一相关服务迟到,就重新尝试尚未成功的组合。此前版本用一次性闸门
+  // (settled),导致「首级回调没触发」时后续级别也永不尝试 —— 功能彻底静默。
+  // 这里监听 cordis 的全局服务到达事件(只读通知,不触碰服务解析),不会抛错。
+  const retryDelays = [0, 500, 1500, 3000, 6000]
+  let retryIndex = 0
+  const tryRetry = (): void => {
+    if (disposed || installed) return
+    // 关键:必须清掉「已尝试」标记,否则迟到重试会被自己挡在门外 ——
+    // 那样自我修复形同虚设(探针场景 B 抓到的正是这个 bug)。
+    triedTiers.clear()
+    attemptTier(0)
+    attemptTier(1)
+    const delay = retryDelays[retryIndex]
+    if (delay !== undefined) {
+      retryIndex += 1
+      setTimeout(tryRetry, delay)
+    }
+  }
+  try {
+    ctx.on('internal/service', () => tryRetry())
+  } catch (error) {
+    state.error = `ctx.on('internal/service') 不可用: ${error instanceof Error ? error.message : String(error)}`
+    publish()
+  }
+  setTimeout(() => {
+    if (!installed && state.error === '') {
+      state.error = '依赖一直未就绪(sidebarRight / sessions 未到达);点文件仍走官方右栏'
+      publish()
+      console.warn('[dsh-web-enhance]', state.error)
+    }
+  }, 8000)
+}
 
 /** blocks 的轻量结构(只取判断所需的字段)。 */
 interface BlockLike {

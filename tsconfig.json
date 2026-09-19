@@ -7,7 +7,43 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    // 开发机专用:官方包随 dsh 安装,不在本仓库的 node_modules 里。paths 指向本机
+    // dsh profile 里的官方包(type-only 解析)。删掉这一段不影响构建 —— build.mjs 走
+    // esbuild,把它们当 external,不做类型解析。
+    "paths": {
+      // 官方包的 type 入口统一从本机 dsh profile 解析(本仓库不装官方包;
+      // 构建走 esbuild external,不依赖这些类型)。本机路径,克隆仓库者请自行调整或删除。
+      "@deepseek-ai/*": [
+        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/*"
+      ],
+      // 带 /client 子路径的官方包:TS 的 paths 对子路径不套用 package.json 的
+      // exports 解析,故逐个显式指到 client 的类型入口。
+      "@deepseek-ai/dsh-client-ui-settings/client": [
+        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-sidebar-right/client": [
+        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-sidebar-right/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-api-remotes/client": [
+        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-api-remotes/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-locale/client": [
+        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-locale/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-conversation/client": [
+        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-renderer/client": [
+        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-slots": [
+        "/home/yangzhe/.dsh/profiles/web/.dsh-module-fallback/node_modules/@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "@deepseek-ai/dsh-client-ui-slots/*": [
+        "/home/yangzhe/.dsh/profiles/web/.dsh-module-fallback/node_modules/@deepseek-ai/dsh-client-ui-slots/*"
+      ]
+    }
   },
   "include": ["src"]
 }
