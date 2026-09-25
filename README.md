@@ -14,8 +14,6 @@
 - **Open files in the system app** — clicking a file path in the conversation hands it to your desktop default application (VS Code, text editor, …) instead of popping the right sidebar. Can be turned off in Settings → General.
 - **Completion alert** — a chime when a session *really* finishes its work (or the moment a dialog waits for your choice), plus a tab-title alert while you are on another tab. On by default; can be turned off in Settings → General. *(Merged in from the retired [dsh-task-notify](https://github.com/yangzhe1991/dsh-task-notify) plugin.)*
 
-![dsh-web-enhance in action: the floating lightbulb toggle (lit = thinking-chain default-expand on) at the bottom-right corner of a conversation, with the thinking chains expanded, and the session cost meter on the stats line](https://raw.githubusercontent.com/yangzhe1991/dsh-web-enhance/main/screenshot.png)
-
 > **Migrating from dsh-task-notify?** That plugin is retired — its completion alert now lives here as a built-in feature (same decision rules, plus an on/off switch in Settings → General). Switch over with:
 >
 > ```sh

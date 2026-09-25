@@ -14,8 +14,6 @@
 - **文件用系统程序打开**:点对话里出现的文件路径,交给本机默认程序(VS Code、文本编辑器等)打开,不再自动弹出右侧栏。可在设置 → 通用里关掉。
 - **跑完提醒**:会话真正干完活时响一声提示音(有弹框等你选择时也会响),页面不在前台时同时把标签页标题改成提醒。默认开启,可在设置 → 通用里关掉。*(从已停维护的 [dsh-task-notify](https://github.com/yangzhe1991/dsh-task-notify) 插件并入。)*
 
-![dsh-web-enhance 实际效果:对话右下角的悬浮灯泡按钮(高亮 = 思维链默认展开已开启)、思维链已全部展开,以及 stats 行上的会话价格统计](https://raw.githubusercontent.com/yangzhe1991/dsh-web-enhance/main/screenshot.png)
-
 > **从 dsh-task-notify 迁移过来?** 那个插件已停维护 —— 它的「跑完提醒」现在是本插件的内置功能(判定口径不变,另外多了「设置 → 通用」里的开关)。切换命令:
 >
 > ```sh
