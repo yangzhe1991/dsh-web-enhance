@@ -13,8 +13,9 @@
  *   而不是记 0 价 —— 宁可略微低估,也不让新模型的用量白算。
  *
  * 数据源与「边发生边累计」:
- * - trajectory 视图(session.views.get('trajectory')的 requests)逐请求带
- *   provider/model/usage/startedAt/startSeq —— 精确计价的基础;
+ * - trajectory 视图(session.views.get('trajectory')的 requests,或会话标准
+ *   hook useTrajectory)逐请求带 provider/model/usage/startedAt/startSeq ——
+ *   精确计价的基础;
  * - 浏览器只加载会话最近约 50 条消息的历史分页,更早的要手动点
  *   「加载更早」。为了让长会话的总价不因分页而变估算,插件把每一条
  *   观测到 usage 的请求按 startSeq 持久化累计(localStorage,按会话,
@@ -26,18 +27,50 @@
  */
 /**
  * trajectory 请求的最小形状:新旧前端都提供,只声明本插件消费的字段。
- * - 新前端(0.1.2-alpha+):ui-trajectory 把请求作为会话标准 hook
- *   useTrajectory(trajectory 快照 .requests)提供,条目字段是
- *   { startSeq, startedAt, provenance?, usage?, ... };
+ *
+ * provider/model 的**所在字段随 dsh 版本变过三次**,本插件三种都读(见
+ * requestRoute 的优先级说明),任一种形态都能计价:
+ * - 0.1.7-rc+ (ui-trajectory 重构后把请求统一成 `RequestView`):
+ *   `requestConfig`(来自 `request/header` 的生效配置,请求一发起就有)与
+ *   `providerMetadata`(来自 `assistant/message` 的 source,请求落成消息后
+ *   才有)。**旧的 `provenance` 字段在 0.1.7 里已被彻底移除** —— 这正是
+ *   0.1.10 升到 0.1.7 后价格行整个消失的原因:读不到 provider → 合并阶段
+ *   跳过所有请求 → summary 为 null → 组件返回 null(没有任何报错,静默
+ *   消失,只有从 DOM 属性 dshWebeCost 才看得出来);
+ * - 0.1.2-alpha ~ 0.1.5:请求条目带 `provenance: { provider, model }`;
  * - 旧前端(0.1.0-rc.x):会话快照 views.get('trajectory').requests,
- *   字段一致(本插件的成本统计只依赖这些字段,不做完整类型绑定)。
+ *   字段与 provenance 形态一致。
+ *
  * usage 走宽松读取(readUsage),不依赖官方类型。
  */
 export interface InspectionRequest {
   startSeq: number
   startedAt: number
-  provenance?: { provider?: string; model?: string }
+  /** 0.1.7-rc+:该请求生效的请求头配置(provider/model 在这里)。 */
+  requestConfig?: { provider?: string; model?: string } | undefined
+  /** 0.1.7-rc+:host 记录的「实际服务该请求的 provider/model」(更权威)。 */
+  providerMetadata?: { provider?: string; model?: string } | undefined
+  /** 0.1.2-alpha ~ 0.1.5 的旧字段(0.1.7 起已移除,仅为兼容旧宿主保留)。 */
+  provenance?: { provider?: string; model?: string } | undefined
   usage?: unknown
+}
+
+/**
+ * 取一条请求的 provider/model,按字段权威性排序:
+ *
+ * 1. `providerMetadata` —— host 落消息时记录的 provider/model(真实服务方),
+ *    只在请求产出消息后才有;有就用它;
+ * 2. `requestConfig` —— 该请求生效的请求头配置,请求一发起就有(流式期间
+ *    也拿得到),所以「最近一条请求是不是 deepseek-official」的门控在
+ *    流式过程中依然成立;请求头落在加载窗口之外时可能缺失;
+ * 3. `provenance` —— 旧版 dsh 的字段。
+ *
+ * 三者都没有时返回 `{ provider: undefined, model: undefined }`,调用方按
+ * 「拿不到路由信息」处理(不计价、门控不成立)。
+ */
+export function requestRoute(request: InspectionRequest): { provider: string | undefined; model: string | undefined } {
+  const source = request.providerMetadata ?? request.requestConfig ?? request.provenance
+  return { provider: source?.provider, model: source?.model }
 }
 
 export interface RequestInspectionSnapshot {
@@ -62,13 +95,22 @@ export const DEEPSEEK_PROVIDER = 'deepseek-official'
 /**
  * 官网人民币价格表(元/百万 tokens),每个字段为 [闲时价, 峰时价]。
  * 数据源:https://api-docs.deepseek.com/zh-cn/quick_start/pricing
- * (官网改价/新模型时同步更新这里;2026-09-08 核对,在售 3 款)。
+ * (官网改价/新模型时同步更新这里;2026-09-26 核对,在售 2 款)。
  *
- * 说明:2026-09-08 官网在售模型为 deepseek-v4-flash、
- * deepseek-v4-pro、deepseek-v4-flash-vision-exp 三款,价格为:
- * flash 与 vision-exp 同价(视觉模型仅对图片 token 按尺寸换算计费,
- * 文本 token 单价与 flash 一致);pro 各档为 flash 的 3 倍。
- * 官方 API 的 GET /models 只返回模型 id,不含价格,价格以官网页为准。
+ * 2026-09-26 核对结论(与 2026-09-08 那版价格表相比有**改名 + 降价**):
+ * - 官网现售 `deepseek-flash`(模型版本 DeepSeek-V4.1-Flash)与
+ *   `deepseek-v4-pro`(DeepSeek-V4-Pro-0813);flash 三档全部降价:
+ *   未命中输入 1.5→1、命中输入 0.05→0.02、输出 4.5→4(峰时同为 2 倍),
+ *   pro 未变;
+ * - 旧模型名 `deepseek-v4-flash`、`deepseek-v4-flash-vision-exp` 官方
+ *   说明「仍可调用,但对应模型已下线,请求由 DeepSeek-V4.1-Flash 提供
+ *   服务,并按 Flash 价格计费」—— 所以这三个名字共用同一份现价
+ *   (FLASH_RATES),而不是各自留一份历史价:**表里的价是「现在计费
+ *   多少」**,不是「历史上多少钱」;
+ * - 历史累计条目**不做重算**(用户 2026-09-26 确认的口径):已经落盘的
+ *   条目是当时按当时价表算的,约等于当时的实际计费,不该被新价改写;
+ *   只有 est(当时未收录、按兜底价记)与 cost=0 的条目会在载入时补账
+ *   (见 migrateAccumulator)。
  */
 export interface ModelRates {
   /** 输入未命中缓存(普通输入)。 */
@@ -79,11 +121,16 @@ export interface ModelRates {
   out: readonly [number, number]
 }
 
-/** 已收录价格表的模型。 */
+/** DeepSeek-V4.1-Flash 现价(旧模型名 deepseek-v4-flash / vision-exp 同价同服务)。 */
+const FLASH_RATES: ModelRates = { miss: [1, 2], hit: [0.02, 0.04], out: [4, 8] }
+
+/** 已收录价格表的模型(键 = host 报上来的 model id,含仍可调用的旧名)。 */
 export const DEEPSEEK_RATES: Readonly<Record<string, ModelRates>> = {
-  'deepseek-v4-flash': { miss: [1.5, 3.0], hit: [0.05, 0.1], out: [4.5, 9.0] },
+  'deepseek-flash': FLASH_RATES,
   'deepseek-v4-pro': { miss: [4.5, 9.0], hit: [0.15, 0.3], out: [13.5, 27.0] },
-  'deepseek-v4-flash-vision-exp': { miss: [1.5, 3.0], hit: [0.05, 0.1], out: [4.5, 9.0] },
+  // 旧模型名:官方仍接受调用、由 V4.1-Flash 服务并按 Flash 价计费,故同价。
+  'deepseek-v4-flash': FLASH_RATES,
+  'deepseek-v4-flash-vision-exp': FLASH_RATES,
 }
 
 /**
@@ -331,8 +378,9 @@ export function mergeAccumulator(acc: CostAccumulator, snapshot: RequestInspecti
   let changed = false
   const entries = acc.entries
   for (const request of snapshot?.requests ?? []) {
-    const provenance = request.provenance
-    if (provenance?.provider !== DEEPSEEK_PROVIDER) continue
+    // provider/model 的读取走 requestRoute(0.1.7 起字段换名,见其注释)。
+    const route = requestRoute(request)
+    if (route.provider !== DEEPSEEK_PROVIDER) continue
     // 防御:startSeq 是请求的唯一身份(契约上必有),缺失时跳过,
     // 避免多条请求塌缩进同一个键互相覆盖。
     if (typeof request.startSeq !== 'number') continue
@@ -340,7 +388,7 @@ export function mergeAccumulator(acc: CostAccumulator, snapshot: RequestInspecti
     if (tokens === null) continue
     const key = String(request.startSeq)
     const peak = isPeakHour(request.startedAt)
-    const model = provenance.model ?? ''
+    const model = route.model ?? ''
     // 未收录的模型(含 model 缺失)按最便宜价兜底,并打上 est 标记,
     // 供以后「模型被收录/兜底价变化」时补账重算。
     const est = DEEPSEEK_RATES[model] === undefined
@@ -374,8 +422,9 @@ export function mergeAccumulator(acc: CostAccumulator, snapshot: RequestInspecti
  */
 export interface CostSummary {
   /**
-   * 门控:窗口内最近一次请求(startedAt 最大且带 provenance)是否走的
-   * DeepSeek 官方 API。为 false 时组件不渲染(当前已换到其它 provider)。
+   * 门控:窗口内最近一次「带路由信息」的请求(startedAt 最大且能读到
+   * provider/model)是否走的 DeepSeek 官方 API。为 false 时组件不渲染
+   * (当前已换到其它 provider)。路由字段的三种形态见 requestRoute。
    */
   current: boolean
   /** 累计计价部分(元,累计器合计;含未收录模型的兜底价估算)。 */
@@ -415,17 +464,18 @@ export function summarizeCost(
   const next = mergeAccumulator(stored, snapshot)
 
   // 窗口内最近一次请求(不限 provider)与最近一次 deepseek-official 请求。
-  // provider 可能缺省(宽松形状),latestOverall 只携带需要的字段。
+  // 路由信息可能整个缺失(旧窗口没有请求头、请求还没落到消息),这种请求
+  // 只当它不存在:latestOverall 只携带需要的字段,不作为门控依据。
   let latestOverall: { provider: string | undefined; startedAt: number } | null = null
   let latestDeepseek: { model: string; startedAt: number } | null = null
   for (const request of snapshot?.requests ?? []) {
-    const provenance = request.provenance
-    if (provenance !== undefined && (latestOverall === null || request.startedAt >= latestOverall.startedAt)) {
-      latestOverall = { provider: provenance.provider, startedAt: request.startedAt }
+    const route = requestRoute(request)
+    if (route.provider !== undefined && (latestOverall === null || request.startedAt >= latestOverall.startedAt)) {
+      latestOverall = { provider: route.provider, startedAt: request.startedAt }
     }
-    if (provenance?.provider === DEEPSEEK_PROVIDER
+    if (route.provider === DEEPSEEK_PROVIDER
       && (latestDeepseek === null || request.startedAt >= latestDeepseek.startedAt)) {
-      latestDeepseek = { model: provenance.model ?? '', startedAt: request.startedAt }
+      latestDeepseek = { model: route.model ?? '', startedAt: request.startedAt }
     }
   }
 

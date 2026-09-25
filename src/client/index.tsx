@@ -25,6 +25,10 @@
  * 计价,同样计入「≈」并在悬停明细里如实标注。算法见 cost.ts,价格表
  * 数据源:https://api-docs.deepseek.com/zh-cn/quick_start/pricing
  *
+ * 请求的 provider/model 字段形态随 dsh 版本变过(0.1.7 起是
+ * requestConfig/providerMetadata,旧的 provenance 已被移除),三种形态
+ * 的读取都收敛在 cost.ts 的 requestRoute 里。
+ *
  * 实现:注册到 conversation.session.header.actions(session 作用域,轮导航
  * 按钮组,createPortal 到 document.body)与 conversation.composer.dock
  * (价格行,挂在官方 stats 行下方)。通过 useSession 订阅 chat 快照与
@@ -67,6 +71,7 @@ import {
   formatCostYuan,
   formatTokens,
   loadAccumulator,
+  requestRoute,
   saveAccumulator,
   summarizeCost,
 } from './cost'
@@ -701,11 +706,21 @@ function navigate(chat: ChatLike | undefined, direction: 'up' | 'down'): void {
  * localStorage(按会话,last-wins),历史分页把旧请求挤出窗口也不影响
  * 累计;只有从未被观测过的历史才走闲时价估算(≈ 前缀)。渲染门控:
  * 最近一次请求不是 deepseek-official 时不渲染(已切到其它 provider)。
+ *
+ * 排查出口:「不显示了」有且只有两种可能 —— ① 窗口里压根没有带
+ * deepseek-official 路由的请求(summary 为 null,新会话或字段形态又变了);
+ * ② 有数据但门控为 false(最近一次请求换了 provider)。两者在 UI 上
+ * 都是「什么都不显示」,所以本组件把判定过程写到 DOM 属性
+ * `document.documentElement.dataset.dshWebeCost`(与功能四的
+ * dshWebeOpenNative 同一套路),一行读取即可定位断在哪一环,不必再靠
+ * 反复刷新 + 贴 Console 二分。
  */
 function SessionCostMeter({ useSession, useTrajectory, useProjection, sessionId }: ComposerDockProps) {
   // trajectory 请求列表:新前端走会话标准 hook useTrajectory;旧前端退回
   // useSession((s) => s.views.get('trajectory'))。两条数据源的请求条目
-  // 字段一致(startSeq/provenance/usage/startedAt),成本算法不变。
+  // 字段一致(startSeq/startedAt/usage + 路由字段),路由字段随 dsh 版本
+  // 变过形(0.1.7 起是 requestConfig/providerMetadata),读取统一走
+  // cost.ts 的 requestRoute,不在组件里另写一套判断。
   const trajectory = useTrajectory !== undefined
     ? useTrajectory((state) => state)
     : useSession((state) => state.views?.get('trajectory'))
@@ -721,6 +736,33 @@ function SessionCostMeter({ useSession, useTrajectory, useProjection, sessionId 
   useEffect(() => {
     if (next !== loadAccumulator(sessionId)) saveAccumulator(sessionId, next)
   }, [next, sessionId])
+
+  // 排查状态(DOM 属性):窗口请求数 / 其中 deepseek-official 的条数 /
+  // 窗口里最近一条请求的路由 / 当前累计价 / 价格行是否渲染。
+  // 放在 early return 之前(否则不渲染时反而没有状态可看)。
+  useEffect(() => {
+    try {
+      const requests = trajectory?.requests ?? []
+      let deepseek = 0
+      let latest: { provider: string | undefined; model: string | undefined; startedAt: number } | null = null
+      for (const request of requests) {
+        const route = requestRoute(request)
+        if (route.provider === DEEPSEEK_PROVIDER) deepseek += 1
+        if (route.provider !== undefined && (latest === null || request.startedAt >= latest.startedAt)) {
+          latest = { provider: route.provider, model: route.model, startedAt: request.startedAt }
+        }
+      }
+      document.documentElement.dataset.dshWebeCost = JSON.stringify({
+        requests: requests.length,
+        deepseek,
+        latest: latest === null ? null : `${latest.provider ?? '?'}/${latest.model ?? '?'}`,
+        total: summary?.total ?? null,
+        shown: summary !== null && summary.current,
+      })
+    } catch {
+      // 非浏览器环境(探针)忽略:诊断属性不是功能本身
+    }
+  }, [trajectory, summary])
 
   if (summary === null || !summary.current) return null
 

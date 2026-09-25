@@ -18,7 +18,7 @@
 
 ## 兼容性
 
-- **dsh ≥ 0.1.2-alpha.4** — 自 **0.1.5** 起支持。重构后的前端以会话标准的 `useChat` hook 提供聊天快照、以 `useTrajectory` 提供轨迹,两条均已适配;旧版 dsh 保留 legacy 路径。自 **0.1.9** 起在 **dsh 0.1.3-alpha.2** 上验证通过;自 **0.1.10** 起在 **dsh 0.1.5-rc.2** 上验证通过(该版本新增「文件用系统程序打开」,已在本机实测)。
+- **dsh ≥ 0.1.2-alpha.4** — 自 **0.1.5** 起支持。重构后的前端以会话标准的 `useChat` hook 提供聊天快照、以 `useTrajectory` 提供轨迹,两条均已适配;旧版 dsh 保留 legacy 路径。自 **0.1.9** 起在 **dsh 0.1.3-alpha.2** 上验证通过;自 **0.1.10** 起在 **dsh 0.1.5-rc.2** 上验证通过(该版本新增「文件用系统程序打开」,已在本机实测);自 **0.1.11** 起在 **dsh 0.1.7-rc.2** 上验证通过 —— dsh 0.1.7 把 trajectory 快照里逐请求的 `provenance` 字段换成了 `requestConfig`/`providerMetadata`,曾让价格行无声消失;**0.1.11** 三种字段形态都读,自 0.1.2-alpha.4 起的宿主都能正常计价。
 - **dsh 0.1.0-rc.x** — 仍通过旧版快照路径支持。
 
 ## 功能
@@ -49,7 +49,7 @@
 - 💰 **会话价格统计** —— 与官方 stats 行(轮数 / token 输入输出那行)**同一行、排在最左侧**,如 `≈ ¥0.83 · 2 轮 12 步 | …`:
 
   - 只有会话的请求走 **DeepSeek 官方 API**(provider 路由 `deepseek-official`)时才显示;切换到其它 API 后自动消失。
-  - 价格 = token × 官网单价(人民币,官网在售模型 `deepseek-v4-flash` / `deepseek-v4-pro` / `deepseek-v4-flash-vision-exp` 均已收录),逐请求按**真实时间**分峰谷计价(峰时 = 北京时间**周一至周五** 9:00–12:00、14:00–18:00,价格为闲时的 2 倍,周末全天闲时),输入区分缓存命中(折扣价)与未命中。
+  - 价格 = token × 官网单价(人民币,官网在售的 `deepseek-flash`、`deepseek-v4-pro` 均已收录;旧模型名 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 官方仍可调用、由 V4.1-Flash 服务并按 Flash 价计费,故同价),逐请求按**真实时间**分峰谷计价(峰时 = 北京时间**周一至周五** 9:00–12:00、14:00–18:00,价格为闲时的 2 倍,周末全天闲时),输入区分缓存命中(折扣价)与未命中。
   - 价格表**未收录**的模型(官网刚上线、插件价格表还没同步)不会漏算:按已知 DeepSeek 模型里**最便宜的价格**兜底计价,悬停明细里如实标注「价格表未收录,按最低价估算」。
   - **边发生边累计**:每观测到一条请求就立刻按它的真实时间计价并持久化(localStorage,按会话,last-wins 不重复计)—— 历史分页把旧请求挤出浏览器窗口也不影响。会话从创建起就用本插件的话,总价**全程精确**,与会话多长无关。
   - 只有**从未被加载过的历史**(装插件之前、别的设备)才没有逐请求数据,差额按当前模型闲时价估算(当前模型未收录时同样走兜底价);与未收录模型的兜底价一起,都会让总价带上 `≈` 前缀(悬停可看明细:模型、token 数、峰/闲请求次数、未收录模型)。点「加载更早」补上历史后,差额部分即转为精确。
@@ -85,7 +85,7 @@ dsh plugin --profile web add link:/path/to/@yangzhe1991/dsh-web-enhance
 
 思维链默认展开作用于官方思考行(根节点 `data-variant="think"`,行内是 `[data-disclosure-row][aria-expanded="false"]` 的折叠条)。因为思维链全文只在展开态挂载,插件直接点击每条折叠行,翻转官方组件内部的 React 展开状态。`document.body` 上挂一个 `MutationObserver`,盯着「新增」的子树(流式输出、新轮次)随挂随点开;开关打开时先全量扫一遍已渲染的行。只扫新增子树、不监听属性变化,所以用户手动收起的行不会被强行展开。
 
-会话价格统计注册到 `conversation.composer.dock`(官方 stats 行同一个 slot,与它排在同一行、作为行内第一个元素)。数据两个来源:`trajectory` 视图(逐请求携带 provider/model/usage/时间戳/startSeq,精确计价的基础)与 `tokenUsage` 投影(整个会话的全量 token)。每条观测到 usage 的请求按 startSeq 持久化累计(localStorage,last-wins,重试替换不重复计),投影超出累计器合计的差额(从未观测过的历史)按闲时价估算并标「≈」;最近一次请求不是 `deepseek-official` 时价格行不渲染。
+会话价格统计注册到 `conversation.composer.dock`(官方 stats 行同一个 slot,与它排在同一行、作为行内第一个元素)。数据两个来源:`trajectory` 视图(逐请求携带 provider/model/usage/时间戳/startSeq,精确计价的基础)与 `tokenUsage` 投影(整个会话的全量 token)。逐请求的 provider/model 字段随 dsh 版本变过(0.1.5 及以前是 `provenance`,0.1.7 起是 `requestConfig`/`providerMetadata`),三种形态的读取都收敛在 `cost.ts` 的 `requestRoute` 里 —— 宿主再次改名字时表现为"价格行静默消失",所以组件同时把判定过程写到 `document.documentElement.dataset.dshWebeCost`(窗口请求数、其中官方 provider 条数、最近路由、总价、是否渲染),一行读取即可定位。每条观测到 usage 的请求按 startSeq 持久化累计(localStorage,last-wins,重试替换不重复计),投影超出累计器合计的差额(从未观测过的历史)按闲时价估算并标「≈」;最近一次请求不是 `deepseek-official` 时价格行不渲染。
 
 ## 开发
 
