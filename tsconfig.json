@@ -9,39 +9,53 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     // 开发机专用:官方包随 dsh 安装,不在本仓库的 node_modules 里。paths 指向本机
-    // dsh profile 里的官方包(type-only 解析)。删掉这一段不影响构建 —— build.mjs 走
-    // esbuild,把它们当 external,不做类型解析。
+    // dsh CLI 安装目录里的官方包(type-only 解析)。删掉这一段不影响构建 ——
+    // build.mjs 走 esbuild external,不做类型解析。
+    //
+    // ⚠️ 路径必须指向「运行中的宿主实际加载的那一版官方包」,也就是 dsh CLI 的
+    // node_modules。两个坑都踩过:
+    // 1) 本仓库 node_modules 里还留着旧的 peer 依赖副本(dsh-client-ui-primitives
+    //    0.1.3-alpha.2),那一版的图标名是 `IconChevronUpOutline14`,而 0.1.7 起
+    //    运行时导出的叫 `IconChevronUpOutlineMedium` —— 按旧版名字写代码,类型检查
+    //    通过、运行时拿到 undefined,报错是 React 的 "Element type is invalid"(整页
+    //    白屏),而"白屏"和"插件没加载"在界面上长得一样,极难定位;
+    // 2) 官方包之间有 cross-package 的声明合并(SlotMap / GlobalStandardProps /
+    //    Context),同一个包被解析成两个不同路径 = 两份模块身份,声明合并不生效
+    //    (表现为 `GlobalStandardProps` 上"没有 useSessions")。
     "paths": {
-      // 官方包的 type 入口统一从本机 dsh profile 解析(本仓库不装官方包;
-      // 构建走 esbuild external,不依赖这些类型)。本机路径,克隆仓库者请自行调整或删除。
+      // 主通配:官方包统一从 dsh CLI 安装目录解析(与运行时同一份)。
       "@deepseek-ai/*": [
-        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/*"
+        "/home/yangzhe/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/*"
       ],
       // 带 /client 子路径的官方包:TS 的 paths 对子路径不套用 package.json 的
-      // exports 解析,故逐个显式指到 client 的类型入口。
-      "@deepseek-ai/dsh-client-ui-settings/client": [
-        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/index.d.ts"
-      ],
-      "@deepseek-ai/dsh-client-ui-sidebar-right/client": [
-        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-sidebar-right/lib/types/client/index.d.ts"
+      // exports 解析,故逐个显式指到 client 的类型入口。**目标必须与上面通配
+      // 解析到的是同一份**(同目录同版本),否则声明合并失效(见上第 2 条)。
+      "@deepseek-ai/dsh-api-job-controller/client": [
+        "/home/yangzhe/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-job-controller/lib/types/client/index.d.ts"
       ],
       "@deepseek-ai/dsh-api-remotes/client": [
-        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-api-remotes/lib/types/client/index.d.ts"
+        "/home/yangzhe/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-api-remotes/lib/types/client/index.d.ts"
       ],
       "@deepseek-ai/dsh-client-locale/client": [
-        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-locale/lib/types/client/index.d.ts"
+        "/home/yangzhe/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-locale/lib/types/client/index.d.ts"
       ],
       "@deepseek-ai/dsh-client-ui-conversation/client": [
-        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/types/client/index.d.ts"
+        "/home/yangzhe/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-layout/client": [
+        "/home/yangzhe/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-layout/lib/types/client/index.d.ts"
       ],
       "@deepseek-ai/dsh-client-ui-renderer/client": [
-        "/home/yangzhe/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/types/client/index.d.ts"
+        "/home/yangzhe/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/types/client/index.d.ts"
       ],
-      "@deepseek-ai/dsh-client-ui-slots": [
-        "/home/yangzhe/.dsh/profiles/web/.dsh-module-fallback/node_modules/@deepseek-ai/dsh-client-ui-slots"
+      "@deepseek-ai/dsh-client-ui-session/client": [
+        "/home/yangzhe/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-session/lib/types/client/index.d.ts"
       ],
-      "@deepseek-ai/dsh-client-ui-slots/*": [
-        "/home/yangzhe/.dsh/profiles/web/.dsh-module-fallback/node_modules/@deepseek-ai/dsh-client-ui-slots/*"
+      "@deepseek-ai/dsh-client-ui-settings/client": [
+        "/home/yangzhe/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-sidebar-right/client": [
+        "/home/yangzhe/.nvm/versions/node/v22.23.2/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-client-ui-sidebar-right/lib/types/client/index.d.ts"
       ]
     }
   },

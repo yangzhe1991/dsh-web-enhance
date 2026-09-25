@@ -1,23 +1,16 @@
 /**
  * dsh-web-enhance 插件,浏览器半 —— 前端增强功能集合。
  *
- * 功能一:以「轮」(turn:你问一句 → agent 完整回复一段)为单位的对话导航。
- * - 摁「上」:回到当前正在看的这一轮的「开头」(最终结果正文起点,跳过
- *   思考、工具和过程性的过渡句);若滚动位置已停在该轮开头附近,则跳到
- *   上一轮的开头。
- * - 摁「下」:跳到当前轮的「结尾」(最终结果行底);若已停在该轮结尾附近,
- *   则跳到下一轮的结尾。
- *
- * 功能二:思维链默认展开。官方把每条 reasoning 块渲染成「Think」折叠条
- * (DisclosureRow),默认收起、只露一行摘要;打开开关后,本插件自动点开
+ * 功能一:思维链默认展开。官方把每条 reasoning 块渲染成「Think」折叠条
+ * (ReasoningRow),默认收起、只露一行摘要;打开开关后,本插件自动点开
  * 对话里全部(包括流式过程中新挂载的)Think 折叠条,直接看思维链全文。
- * 开关是悬浮按钮组里带灯泡图标的第三个按钮,状态持久化在 localStorage,
- * 默认开启。用户手动收起某条折叠条不会被强制展开(只对「新增」的子树
- * 生效,不监听属性变化)。
+ * 开关是右下角悬浮的灯泡按钮(⚙ 位置见 styles.ts 的 .dsh-webe-float),
+ * 状态持久化在 localStorage,默认开启。用户手动收起某条折叠条不会被强制
+ * 展开(只对「新增」的子树生效,不监听属性变化)。
  *
- * 功能三:会话价格统计(仅 DeepSeek 官方 API)。当前会话的请求走
+ * 功能二:会话价格统计(仅 DeepSeek 官方 API)。当前会话的请求走
  * provider 路由 `deepseek-official` 时,在官方 stats 行(输入/输出 token
- * 那行)正下方渲染一行「≈ ¥0.83」:已加载历史窗口内的请求逐条按真实
+ * 那行)同一行最左侧渲染一行「≈ ¥0.83」:已加载历史窗口内的请求逐条按真实
  * 时间戳分峰谷(北京时间 9-12、14-18 为峰时,价格为闲时 2 倍)、按模型
  * 单价精确计价;tokenUsage 投影里窗口外(未翻页加载)的历史没有时间戳,
  * 差额按当前模型闲时价估算并以「≈」前缀标示。价格表未收录的模型(官网
@@ -29,19 +22,22 @@
  * requestConfig/providerMetadata,旧的 provenance 已被移除),三种形态
  * 的读取都收敛在 cost.ts 的 requestRoute 里。
  *
- * 实现:注册到 conversation.session.header.actions(session 作用域,轮导航
- * 按钮组,createPortal 到 document.body)与 conversation.composer.dock
- * (价格行,挂在官方 stats 行下方)。通过 useSession 订阅 chat 快照与
- * trajectory 视图,useProjection 读 tokenUsage 全量投影。
+ * 功能三:点对话里的文件路径,交本机默认程序打开,不再弹右侧栏(见 open-native.tsx)。
  *
- * 轮的数据契约:chat.timeline.turnOrder 为轮序,chat.locations.getTurn(turn)
- * 返回该轮按顺序排列的节点 key。轮的「最终结果」= 轮内最后一个「含非空
- * 正文 text 块、且 blocks 以 text 结尾」的 assistant / assistant-step 节点
- * (过渡句 blocks 形如 [思考, 文字, 工具…],最终结果形如 [思考, 文字] 或
- * [文字]);整轮没有收尾总结时回退到轮内最后一个含正文的节点。DOM 定位
- * 复用官方标记(data-chat-anchor-key + [data-conversation-scroll]),开头
- * 锚点越过思考块根元素(data-variant="think",展开态含整条思维链)落在
- * 正文起点。
+ * 功能四:跑完提醒 —— 会话真正干完活(agent 停止、没有后台任务在跑、没有等你
+ * 选择的弹框)时播一声提示音,页面不在前台时同时把标签页标题改成提醒;有后台
+ * 任务失败时改用下行提示音。默认开启,设置 → 通用 里可关。该功能从已停维护的
+ * @yangzhe1991/dsh-task-notify 迁移而来,决策口径见 notify-monitor.ts 的文件头。
+ *
+ * 已移除:逐轮对话导航(上/下箭头)。dsh 0.1.7 官方已内置回合导航轨
+ * (TurnNavigator,对话右侧的刻度条),自己再放一对箭头是重复功能;而且官方
+ * 0.1.7 改了对话列的 DOM 结构(分步过程组内部也有 [data-chat-flow]、折叠行改用
+ * hidden 属性且几何全 0),维护成本明显高于收益。删除位置见 git 历史。
+ *
+ * 实现:注册到 conversation.composer.dock(价格行)、settings.general.item
+ * (两个设置开关行)、shell.overlay(root 作用域:跑完提醒的监视器 + 思维链
+ * 开关按钮,都用 createPortal 渲染到 document.body)。价格行通过 useSession /
+ * useTrajectory 订阅轨迹、useProjection 读 tokenUsage 全量投影。
  */
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -50,20 +46,21 @@ import { createPortal } from 'react-dom'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 // 声明合并:ctx.slots 由 ui-renderer 挂载到 cordis Context(官方同款导入)。
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
-import {
-  IconChevronDownOutline14,
-  IconChevronUpOutline14,
-  IconThinkOutline14,
-  Tooltip,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+// 图标名必须取「运行中的宿主实际导出的那一个」:dsh 0.1.7 起官方图标的命名从
+// 尺寸后缀(`IconThinkOutline14`)改成语义后缀(`…OutlineMedium` / `…OutlineRegular`),
+// 旧名字在运行时是 undefined,React 渲染时抛 "Element type is invalid",整个
+// 客户端组合树白屏 —— 而与「插件没加载」在界面上长得一样,极难定位。
+import { IconThinkOutlineMedium, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 // 触发 SlotMap / Context 声明合并:
-// - conversation 声明 conversation.session.header.actions 与 ctx.sessions;
+// - conversation 声明 conversation.composer.dock 与 ctx.sessions;
 // - settings 声明 settings.general.item;
 // - sidebar-right 声明 ctx.sidebarRight / ctx.sidebarRightTabs;
-// - api-remotes 声明 ctx.remote(远端命名空间)。
+// - api-remotes 声明 ctx.remote(远端命名空间);
+// - layout 声明 shell.overlay(功能四的监视器与思维链按钮挂在这里)。
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import {
@@ -76,144 +73,17 @@ import {
   summarizeCost,
 } from './cost'
 import type { RequestInspectionSnapshot } from './cost'
-// 功能四:点文件交系统默认程序打开(拦截 ctx.sidebarRight.openResource)。
+// 功能三:点文件交系统默认程序打开(拦截 ctx.sidebarRight.openResource)。
 import {
   NativeOpenRow,
   installNativeFileOpen,
   registerNativeOpenCopy,
   setNativeOpenText,
 } from './open-native'
-
-/** 注入的 <style> 是否已存在(按钮样式,避免重复注入)。 */
-let styleInjected = false
-
-/**
- * 插件样式。
- * - .dsh-webe-jump-float:悬浮容器,定位在视口右下角、官方「滚到底部」
- *   圆钮(toBottomSlot,z-index 8)的正上方,竖排圆钮;
- * - .dsh-webe-jump:圆钮本体,外观照官方 .Md3f7G_toBottom(34px 圆形、
- *   悬浮底色 + 阴影),hover 变亮;
- * - .dsh-webe-jump[data-active='true']:思维链默认展开开关的开启态,
- *   底色加深 + 图标用品牌强调色,与关闭态区分;
- * - 价格行与官方 stats 行合流(见下):官方把 dock 出口包装渲染成
- *   display:contents(行内样式),条目各自成块;价格存在时用 :has() 把
- *   包装还原成真实 flex 行(!important 盖过行内样式),价格(order 0)
- *   排最左、stats 行(order 2)跟在后面。
- */
-const BUTTON_CSS = `
-.dsh-webe-jump-float {
-  position: fixed;
-  right: 20px;
-  bottom: calc(var(--dsh-composer-height, 152px) + 64px);
-  z-index: 9;
-  flex-direction: column;
-  gap: 8px;
-  display: flex;
-}
-.dsh-webe-jump {
-  width: 34px;
-  height: 34px;
-  min-height: 0;
-  color: var(--dsw-alias-label-primary);
-  cursor: pointer;
-  background: var(--dsw-alias-button-floating-fill);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 100px;
-  box-shadow: var(--dsw-shadow-lv2);
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  display: inline-flex;
-}
-.dsh-webe-jump:hover,
-.dsh-webe-jump:focus-visible {
-  background: var(--dsw-alias-button-floating-hover);
-}
-.dsh-webe-jump[data-active='true'] {
-  background: var(--dsw-alias-button-floating-hover);
-  color: var(--dsw-alias-state-business-primary);
-}
-/* 价格行存在时(第二个条目),dock 出口包装变成整宽 flex 行:
-   价格 + stats 作为一个整体居中(与原 stats 行居中的视觉一致),
-   价格是行内第一个元素(flex:none,永不压缩、永不溢出);stats 行
-   不再限死 748px、不撑满剩余宽度,只在整体真正超出屏幕时才收缩
-   省略(justify-content:center 下唯一可收缩项,价格始终可见)。 */
-[data-slot="conversation.composer.dock"]:has(> :nth-child(2)) {
-  display: flex !important;
-  align-items: baseline;
-  gap: 10px;
-  justify-content: center;
-  width: 100%;
-  max-width: none;
-  margin: 0;
-  padding: 4px calc(var(--dsh-composer-side-clearance) + 16px) 0;
-  box-sizing: border-box;
-}
-/* 官方 stats 行(条目里 DOM 序第一个):挪到价格之后,让出自身
-   块级布局与固定宽度,只在剩余空间不足时收缩省略。 */
-[data-slot="conversation.composer.dock"]:has(> :nth-child(2)) > :first-child {
-  order: 2;
-  width: auto;
-  max-width: none;
-  margin: 0;
-  padding: 0;
-  text-align: left;
-  flex: 0 1 auto;
-  min-width: 0;
-}
-/* 价格本体:flex:none 的行首项,永不压缩、永不溢出。 */
-.dsh-webe-cost {
-  order: 0;
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 20px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-/* 设置「通用」分区里的功能行(功能四):标题 + 说明两行,右侧开关。
-   排版照官方功能行(row / rowText / title / desc),类名自带前缀,
-   不与官方模块类耦合。 */
-/* 分隔线与内边距照官方功能行(lats3W_row:.5px 下边框 + 16px 上下内边距),
-   否则一行没有分隔线的设置项在「通用设置」页里会被当成不存在的空白。 */
-.dsh-webe-setting-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  justify-content: space-between;
-  width: 100%;
-  padding: 16px 0;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
-}
-.dsh-webe-setting-text {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  gap: 4px;
-  min-width: 0;
-  padding-right: 48px;
-}
-.dsh-webe-setting-title {
-  color: var(--dsw-alias-label-primary);
-  font-size: 14px;
-  line-height: 22px;
-}
-.dsh-webe-setting-desc {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 20px;
-}
-`
-
-/** 全局注入一次按钮样式(浏览器端 bundle 的模块级副作用)。 */
-function ensureStyle(): void {
-  if (styleInjected || typeof document === 'undefined') return
-  styleInjected = true
-  const tag = document.createElement('style')
-  tag.dataset.plugin = 'dsh-web-enhance'
-  tag.textContent = BUTTON_CSS
-  document.head.appendChild(tag)
-}
+// 功能四:跑完提醒(提示音 + 标签页标题),从已停维护的 dsh-task-notify 迁移而来。
+import { applyNotify, registerNotifyCopy, setNotifyText } from './notify'
+import { ensureStyle } from './styles'
+import { PLUGIN_BUILD, PLUGIN_VERSION } from './version.generated'
 
 // —— 思维链默认展开 ——
 //
@@ -269,23 +139,21 @@ function expandThinkRowsWithin(root: ParentNode): void {
   }
 }
 
+
 /** 需要的 client 服务:sessions(会话数据)、slots(slot 注册)。 */
 export const inject = ['sessions', 'slots']
 
-/** Client 插件 body:注册 header 按钮组、composer.dock 价格行、设置开关行,并接管文件点击。 */
+/** Client 插件 body:注册 composer.dock 价格行、设置开关行、思维链按钮与提醒监视器,并接管文件点击。 */
 export function apply(ctx: ClientContext): void {
+  // 装配打点(与提醒功能的打点同一套戳):排查「页面上跑的是哪份构建」,
+  // 控制台一行 + dataset.dshWebeVersion 即可,不必翻 DevTools 的 network。
+  try {
+    console.info(`[dsh-web-enhance] v${PLUGIN_VERSION} 已装配 (build ${PLUGIN_BUILD})`)
+    document.documentElement.dataset.dshWebeVersion = `${PLUGIN_VERSION} (build ${PLUGIN_BUILD})`
+  } catch (error) {
+    console.warn('[dsh-web-enhance] 装配打点失败(已忽略):', error)
+  }
   ensureStyle()
-  ctx.slots.inject(
-    'conversation.session.header.actions',
-    () => ctx.slots.register({
-      name: 'conversation.session.header.actions',
-      id: 'web-enhance-jump-reply-ends',
-      // 官方已有条目:agent-preset=-10、subagent-catalog=10、job-list=20。
-      // 取 15:排在 job-list 之前,且不与 subagent-catalog(10)并列,
-      // 渲染位置确定。
-      order: 15,
-    }, JumpToReplyEnds),
-  )
   ctx.slots.inject(
     'conversation.composer.dock',
     () => ctx.slots.register({
@@ -296,8 +164,22 @@ export function apply(ctx: ClientContext): void {
       order: 10,
     }, SessionCostMeter),
   )
+  // 思维链默认展开的开关按钮:root 作用域,渲染 null 的条目里 createPortal
+  // 一个右下角悬浮按钮(与跑完提醒同为 root 级,不随会话切换重挂载)。
+  ctx.slots.inject(
+    'shell.overlay',
+    () => ctx.slots.register({
+      name: 'shell.overlay',
+      id: 'web-enhance-think-toggle',
+    }, ThinkToggleButton),
+  )
   registerNativeOpenRow(ctx)
   installNativeFileOpenFeature(ctx)
+  // 功能四:跑完提醒(监视条目 + 设置开关行 + 文案注册)。
+  applyNotify(ctx)
+  ctx.inject(['locale'], (scoped: ClientContext) => {
+    setNotifyText(registerNotifyCopy(scoped.locale))
+  })
 }
 
 /**
@@ -458,244 +340,76 @@ function installNativeFileOpenFeature(ctx: ClientContext): void {
   }, 8000)
 }
 
-/** blocks 的轻量结构(只取判断所需的字段)。 */
-interface BlockLike {
-  kind: string
-  text?: string
-}
-
-/** 判断对象是否携带 blocks 数组字段(类型守卫,避免 as any)。 */
-function hasBlocks(value: unknown): value is { blocks?: readonly BlockLike[] } {
-  return typeof value === 'object' && value !== null && Array.isArray((value as { blocks?: unknown }).blocks)
-}
-
-/** 取节点的 blocks:assistant 节点在自身,assistant-step 节点在 data。 */
-function nodeBlocks(node: { kind: string; data: unknown }): readonly BlockLike[] | undefined {
-  if (node.kind === 'assistant' && hasBlocks(node)) return node.blocks
-  if (node.kind === 'assistant-step' && hasBlocks(node.data)) return node.data.blocks
-  return undefined
-}
-
-/** blocks 里是否存在非空正文(text 块)。与官方 hasTextAssistant 同口径。 */
-function hasTextBlocks(blocks: readonly BlockLike[] | undefined): boolean {
-  return blocks?.some((block) => block.kind === 'text' && (block.text ?? '').trim() !== '') ?? false
-}
-
-/** 一个 chat 节点是否算「真正的回复正文」:可见、且含非空正文。 */
-function isRealReply(node: { kind: string; data: unknown; visibility: string }): boolean {
-  if (node.kind !== 'assistant' && node.kind !== 'assistant-step') return false
-  return node.visibility === 'visible' && hasTextBlocks(nodeBlocks(node))
-}
 
 /**
- * 一个节点是否算「最终结果」:含非空正文,且 blocks 以正文(text)结尾。
+ * 思维链默认展开的开关按钮(root 作用域,渲染为右下角悬浮圆钮)。
  *
- * 一轮里 agent 会在思考/工具之间蹦出过渡句(blocks 形如
- * [思考, 文字, 工具…] —— 说完还要继续干活),最终结果则是
- * [思考, 文字] 或 [文字](正文后面不再跟工具/思考)。用户要的
- * 「轮的第一行」锚点就是最终结果,过渡句要跳过。
+ * 为什么挂在 shell.overlay 而不是 conversation.session.header.actions:
+ * 那个 slot 的作用只是让按钮随会话切换重挂载 —— 而这个开关是全局偏好
+ * (localStorage + MutationObserver 全文档扫描),本来就不需要会话上下文。
+ * 挂在 root 上少一处会话级 slot 依赖,也少一次重挂载。
  */
-function isFinalReply(node: { kind: string; data: unknown; visibility: string }): boolean {
-  if (!isRealReply(node)) return false
-  const blocks = nodeBlocks(node)
-  // blocks 非空(isRealReply 已保证有 text);取最后一个块的 kind 判断。
-  return blocks !== undefined && blocks.length > 0 && blocks[blocks.length - 1].kind === 'text'
-}
+function ThinkToggleButton() {
+  // 思维链默认展开开关:默认开,持久化在 localStorage,跨会话/刷新生效。
+  const [expandThink, setExpandThink] = useState(readExpandThink)
 
-/** 所需的 chat 快照结构(新前端 useChat / 旧前端 useSession((s) => s.chat) 均满足该形状)。 */
-interface ChatLike {
-  order: readonly string[]
-  nodes: { get(key: string): { kind: string; data: unknown; visibility: string } | undefined }
-  locations: { getTurn(turn: number): readonly string[] }
-  timeline: { turnOrder: readonly number[] }
+  // 开关打开时自动展开思维链:先全量扫一遍已有行(初次开启/页面加载时
+  // 已渲染的历史行),再挂 MutationObserver 盯「新增」的子树 —— 流式
+  // 渲染过程中新挂载的 Think 行会被立刻点开,展开态下官方才会挂载全文。
+  //
+  // 只扫新增子树、不监听属性变化:用户手动收起某条折叠条时,React 只是
+  // 把摘要换回 DOM(属性 + 节点替换),不会命中「新增的折叠行」,因此
+  // 手动操作不会被插件强行展开回去,尊重用户。
+  useEffect(() => {
+    if (!expandThink) return
+    expandThinkRowsWithin(document)
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type !== 'childList') continue
+        for (const added of mutation.addedNodes) {
+          if (added instanceof Element) expandThinkRowsWithin(added)
+        }
+      }
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [expandThink])
+
+  return createPortal(
+    <span className="dsh-webe-float">
+      <button
+        type="button"
+        className="dsh-webe-float-button"
+        data-active={expandThink || undefined}
+        aria-pressed={expandThink}
+        onClick={() => {
+          const next = !expandThink
+          setExpandThink(next)
+          writeExpandThink(next)
+        }}
+        title={expandThink ? '思维链默认展开:开(点击关闭)' : '思维链默认展开:关(点击开启)'}
+        aria-label={expandThink ? '思维链默认展开:开(点击关闭)' : '思维链默认展开:关(点击开启)'}
+      >
+        <IconThinkOutlineMedium />
+      </button>
+    </span>,
+    document.body,
+  )
 }
 
 /**
- * 会话标准 props 的最小形状:新前端(0.1.2-alpha+)里 chat 快照改由
- * dsh-client-ui-chat 通过 uiSession.provide({ hooks: ["chat"] }) 注册成
- * 会话标准 hook useChat;trajectory 由 ui-trajectory 注册成 useTrajectory。
- * 旧前端(0.1.0-rc.x)则分别是 useSession((s) => s.chat) 与
- * useSession((s) => s.views.get('trajectory'))。两处都保留旧路径兜底,
- * 同一环境内恒走同一分支,不违反 React hook 顺序规则。
+ * 价格行(conversation.composer.dock)从会话标准 props 拿到的 hook:
+ * trajectory(逐请求明细,新前端是 useTrajectory、旧前端退回会话视图)与
+ * tokenUsage 投影。新前端(0.1.2-alpha+)由 ui-chat / ui-trajectory 通过
+ * uiSession.provide({ hooks }) 注册成会话标准 hook;旧前端(0.1.0-rc.x)则分别
+ * 是 useSession((s) => s.chat) 与 useSession((s) => s.views.get('trajectory'))。
+ * 两处都保留旧路径兜底,同一环境内恒走同一分支,不违反 React hook 顺序规则。
  */
-interface HeaderActionsProps {
-  useSession<T>(selector: (snapshot: { chat?: ChatLike }) => T): T
-  useChat?: <T>(selector: (snapshot: ChatLike) => T) => T
-}
-
 interface ComposerDockProps {
   sessionId: string
   useSession<T>(selector: (snapshot: { views?: { get(key: string): RequestInspectionSnapshot | undefined } }) => T): T
   useTrajectory?: <T>(selector: (snapshot: RequestInspectionSnapshot) => T) => T
   useProjection?: (key: string) => unknown
-}
-
-/** 节点 key 属于哪个轮(轮序从前到后找第一个包含它的轮)。 */
-function turnOfKey(chat: ChatLike, key: string): number | null {
-  for (const turn of chat.timeline.turnOrder) {
-    if (chat.locations.getTurn(turn).includes(key)) return turn
-  }
-  return null
-}
-
-/**
- * 某轮的「最终结果」节点 key:轮内最后一个 isFinalReply 的节点;
- * 整轮都没有最终结果(全是一边干活一边说话,没有收尾总结)时,
- * 回退到轮内最后一个含正文的节点。
- */
-function finalTextNodeKey(chat: ChatLike, turn: number): string | null {
-  const keys = chat.locations.getTurn(turn)
-  let fallback: string | null = null
-  for (const key of keys) {
-    const node = chat.nodes.get(key)
-    if (node === undefined || !isRealReply(node)) continue
-    fallback = key
-    if (isFinalReply(node)) return key
-  }
-  return fallback
-}
-
-/** 会话里是否存在任何含正文的轮(决定按钮组是否渲染)。 */
-function hasAnyTextTurn(chat: ChatLike | undefined): boolean {
-  if (chat === undefined) return false
-  return chat.timeline.turnOrder.some((turn) => finalTextNodeKey(chat, turn) !== null)
-}
-
-/**
- * 消息流容器内,视口上 1/3 高度处正在显示的那一行。
- * 用视口上部而非最顶部一行判定「当前在看」的轮:若视口顶部恰好压着
- * 上一轮的尾巴,顶部行会属于上一轮,而用户实际在看的内容属于下一轮。
- */
-function rowAtUpperThird(flow: Element): Element | null {
-  const scrollport = flow.closest('[data-conversation-scroll]')
-  const viewport = (scrollport ?? flow).getBoundingClientRect()
-  const point = viewport.top + viewport.height / 3
-  for (const row of flow.querySelectorAll('[data-chat-anchor-key]')) {
-    const rect = row.getBoundingClientRect()
-    // 完全在取样点上方(底部未越过取样点)的行跳过;第一个越过取样点的行即是。
-    if (rect.bottom > point) return row
-  }
-  return null
-}
-
-/** 在消息流容器里按 key 找渲染行(避免 key 含特殊字符时 querySelector 转义问题)。 */
-function findRow(flow: Element, key: string): Element | null {
-  for (const el of flow.querySelectorAll('[data-chat-anchor-key]')) {
-    if (el.getAttribute('data-chat-anchor-key') === key) return el
-  }
-  return null
-}
-
-/**
- * 计算某轮「开头/结尾」锚点对应的目标 scrollTop(不做实际滚动)。
- *
- * - edge 'start':该轮最终结果正文起点对齐视口顶部。定位规则(数据驱动,
- *   避免 DOM 猜测):若该节点 blocks 以 reasoning 开头(先思考后正文),
- *   取行内最后一个思考块根元素([data-variant="think"])的底部 + 12px;
- *   否则正文从行顶开始,取行顶。
- *
- *   为什么取思考块「根元素」而不是折叠条:官方 ReasoningRow 的展开内容
- *   (思维链全文)挂在折叠条([aria-expanded])下方的兄弟节点里 —— 展开态
- *   下折叠条自身只有一行高,取它的 bottom 会落在思维链开头;根元素在
- *   展开态下包含整条链,折叠态下等于折叠条本身,两种状态都正确。
- * - edge 'end':该轮最后一个已渲染节点的行底对齐视口底部(轮尾 = 该轮
- *   内容结束的位置,最终结果之后可能还有空思考节点,一并算进轮尾)。
- *
- * @returns 目标 scrollTop;目标行未渲染或找不到时返回 null。
- */
-function turnTargetScrollTop(chat: ChatLike, flow: Element, scrollport: Element, turn: number, edge: 'start' | 'end'): number | null {
-  const viewport = scrollport.getBoundingClientRect()
-  if (edge === 'end') {
-    // 从后往前找该轮第一个已渲染的行,它的行底就是轮尾。
-    const keys = chat.locations.getTurn(turn)
-    for (let i = keys.length - 1; i >= 0; i -= 1) {
-      const row = findRow(flow, keys[i])
-      if (row !== null) return scrollport.scrollTop + (row.getBoundingClientRect().bottom - viewport.bottom)
-    }
-    return null
-  }
-  const key = finalTextNodeKey(chat, turn)
-  if (key === null) return null
-  const row = findRow(flow, key)
-  if (row === null) return null
-  const node = chat.nodes.get(key)
-  const blocks = node !== undefined ? nodeBlocks(node) : undefined
-  let anchorTop: number
-  if (blocks?.[0]?.kind === 'reasoning') {
-    // 思考块根元素(data-variant="think")才是整条思维链的容器:折叠态下
-    // 它等于折叠条,展开态下思维链全文挂载在折叠条([aria-expanded])下方
-    // 的兄弟节点里。若取折叠条的 bottom,展开时会落在思维链开头而不是
-    // 正文起点 —— 锚点必须取最后一个思考块根的底部(blocks 以 reasoning
-    // 开头时,正文紧随最后一个思考块之后)。
-    const thinkRoots = row.querySelectorAll('[data-variant="think"]')
-    const lastThink = thinkRoots[thinkRoots.length - 1]
-    anchorTop = (lastThink !== undefined ? lastThink.getBoundingClientRect().bottom : row.getBoundingClientRect().top) + 12
-  } else {
-    anchorTop = row.getBoundingClientRect().top
-  }
-  return scrollport.scrollTop + (anchorTop - viewport.top)
-}
-
-/**
- * 执行一次「上/下」轮导航(上下对称的逐轮翻页)。
- *
- * - up:回到当前轮的「开头」(最终结果正文起点);若滚动位置已经停在该轮
- *   开头附近,则跳到上一轮的开头;已是第一轮则不动。
- * - down:跳到当前轮的「结尾」(轮内最后一行行底);若滚动位置已经停在该轮
- *   结尾附近,则跳到下一轮的结尾;已是最后一轮则不动。
- *
- * 「已经停在开头/结尾」用滚动位置与锚点的距离判定(小于 60px,即锚点
- * 已贴着视口边缘),而不是宽泛的视口比例 —— 最终结果很长占满整屏时,
- * 锚点可能仍在视口内但用户其实停在行中段,宽阈值会误判成「已在开头」
- * 而直接翻页。
- */
-function navigate(chat: ChatLike | undefined, direction: 'up' | 'down'): void {
-  if (chat === undefined) return
-  const flow = document.querySelector('[data-chat-flow]')
-  if (flow === null) return
-  const scrollport = flow.closest('[data-conversation-scroll]')
-  if (scrollport === null) return
-  const sampleRow = rowAtUpperThird(flow)
-  if (sampleRow === null) return
-  const sampleKey = sampleRow.getAttribute('data-chat-anchor-key')
-  if (sampleKey === null) return
-
-  // 当前轮:取样行所属轮;取样行不属于任何轮(user/context 等节点)时,
-  // 向后找最近一个属于轮的节点,把它的轮当作当前轮。
-  let currentTurn = turnOfKey(chat, sampleKey)
-  if (currentTurn === null) {
-    const order = chat.order
-    const index = order.indexOf(sampleKey)
-    for (let i = index; i < order.length; i += 1) {
-      currentTurn = turnOfKey(chat, order[i])
-      if (currentTurn !== null) break
-    }
-  }
-  if (currentTurn === null) return
-
-  const turnOrder = chat.timeline.turnOrder
-  const currentIndex = turnOrder.indexOf(currentTurn)
-  if (currentIndex < 0) return
-
-  const edge: 'start' | 'end' = direction === 'up' ? 'start' : 'end'
-  const currentScroll = scrollport.scrollTop
-
-  // 当前轮锚点对应的目标 scrollTop。
-  const targetScroll = turnTargetScrollTop(chat, flow, scrollport, currentTurn, edge)
-  if (targetScroll === null) return
-
-  // 已经停在当前轮的开头/结尾(锚点距视口边缘 < 60px)→ 翻相邻轮。
-  if (Math.abs(currentScroll - targetScroll) < 60) {
-    const nextIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1
-    if (nextIndex < 0 || nextIndex >= turnOrder.length) return // 已是第一轮/最后一轮
-    const nextScroll = turnTargetScrollTop(chat, flow, scrollport, turnOrder[nextIndex], edge)
-    if (nextScroll === null) return
-    scrollport.scrollTop = nextScroll
-    return
-  }
-
-  // 否则:回到当前轮的开头 / 跳到当前轮的结尾。
-  scrollport.scrollTop = targetScroll
 }
 
 /**
@@ -786,95 +500,5 @@ function SessionCostMeter({ useSession, useTrajectory, useProjection, sessionId 
         {approx ? '≈ ' : ''}{formatCostYuan(summary.total)}
       </span>
     </Tooltip>
-  )
-}
-
-/**
- * 「轮导航 + 思维链默认展开」悬浮按钮组:上箭头回到当前轮开头(已停在
- * 轮首则翻上一轮),下箭头跳到当前轮结尾(已停在轮尾则翻下一轮),灯泡
- * 按钮是思维链默认展开开关(开启态高亮)。会话里没有任何含正文的轮时
- * 不渲染。
- *
- * 挂载点仍是 header.actions(session 作用域,随会话切换自动重订阅),
- * 但用 createPortal 渲染到 document.body 并以 fixed 定位在右下角,
- * 不占用头部空间。
- */
-function JumpToReplyEnds({ useSession, useChat }: HeaderActionsProps) {
-  // Chat 快照:新前端走会话标准 hook useChat;旧前端退回 useSession 的
-  // chat 字段。快照形状一致(order/nodes/locations/timeline)。
-  const chat = useChat !== undefined
-    ? useChat((state) => state)
-    : useSession((state) => state.chat)
-
-  // 思维链默认展开开关:默认开,持久化在 localStorage,跨会话/刷新生效。
-  const [expandThink, setExpandThink] = useState(readExpandThink)
-
-  // 首次渲染时注入样式(按需,避免空白 <style> 常驻)。
-  useEffect(() => {
-    ensureStyle()
-  }, [])
-
-  // 开关打开时自动展开思维链:先全量扫一遍已有行(初次开启/页面加载时
-  // 已渲染的历史行),再挂 MutationObserver 盯「新增」的子树 —— 流式
-  // 渲染过程中新挂载的 Think 行会被立刻点开,展开态下官方才会挂载全文。
-  //
-  // 只扫新增子树、不监听属性变化:用户手动收起某条折叠条时,React 只是
-  // 把摘要换回 DOM(属性 + 节点替换),不会命中「新增的折叠行」,因此
-  // 手动操作不会被插件强行展开回去,尊重用户。
-  useEffect(() => {
-    if (!expandThink) return
-    expandThinkRowsWithin(document)
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type !== 'childList') continue
-        for (const added of mutation.addedNodes) {
-          if (added instanceof Element) expandThinkRowsWithin(added)
-        }
-      }
-    })
-    observer.observe(document.body, { childList: true, subtree: true })
-    return () => observer.disconnect()
-  }, [expandThink])
-
-  // 会话里还没有任何含正文的轮(新会话/加载中)时整个按钮组不渲染。
-  if (!hasAnyTextTurn(chat)) return null
-
-  return createPortal(
-    <span className="dsh-webe-jump-float">
-      <button
-        type="button"
-        className="dsh-webe-jump"
-        onClick={() => navigate(chat, 'up')}
-        title="回到本轮开头(已停在开头则跳上一轮)"
-        aria-label="回到本轮开头(已停在开头则跳上一轮)"
-      >
-        <IconChevronUpOutline14 />
-      </button>
-      <button
-        type="button"
-        className="dsh-webe-jump"
-        onClick={() => navigate(chat, 'down')}
-        title="跳到本轮结尾(已停在结尾则跳下一轮)"
-        aria-label="跳到本轮结尾(已停在结尾则跳下一轮)"
-      >
-        <IconChevronDownOutline14 />
-      </button>
-      <button
-        type="button"
-        className="dsh-webe-jump"
-        data-active={expandThink || undefined}
-        aria-pressed={expandThink}
-        onClick={() => {
-          const next = !expandThink
-          setExpandThink(next)
-          writeExpandThink(next)
-        }}
-        title={expandThink ? '思维链默认展开:开(点击关闭)' : '思维链默认展开:关(点击开启)'}
-        aria-label={expandThink ? '思维链默认展开:开(点击关闭)' : '思维链默认展开:关(点击开启)'}
-      >
-        <IconThinkOutline14 />
-      </button>
-    </span>,
-    document.body,
   )
 }

@@ -1,3 +1,5 @@
 # 构建产物(由 build.mjs 生成;git 安装时 prepare 脚本会现场构建)
 lib/
 node_modules/
+# 构建期生成的版本戳模块(由 build.mjs 重写)
+src/client/version.generated.ts
