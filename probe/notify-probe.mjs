@@ -17,6 +17,13 @@
 import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 
+// 期望的版本戳从 package.json 读,不写死 —— 写死的话每次 bump 版本探针都会红,
+// 而"探针红了"和"装配坏了"在输出上长得一样(0.2.1 bump 时就撞过一次)。
+const { version: EXPECTED_VERSION } = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+)
+const VERSION_STAMP = new RegExp(`^${EXPECTED_VERSION.replaceAll('.', '\\.')} \\(build `)
+
 // —— 加载 TS 源(状态机是纯 TS,用 esbuild 现场转译,保证与产物同源) ——
 const { transform } = await import('esbuild')
 const monitorSource = readFileSync(new URL('../src/client/notify-monitor.ts', import.meta.url), 'utf8')
@@ -333,8 +340,8 @@ check('jobs 服务缺失时:其余功能照常注册,只是没有 shell.overlay 
 
 check('装配打点写到 dataset(排查出口存在且版本戳统一)', () => {
   loadBundle()
-  assert.match(globalThis.document.documentElement.dataset.dshWebeVersion, /^0\.2\.0 \(build /)
-  assert.match(globalThis.document.documentElement.dataset.dshWebeNotifyVersion, /^0\.2\.0 \(build /)
+  assert.match(globalThis.document.documentElement.dataset.dshWebeVersion, VERSION_STAMP)
+  assert.match(globalThis.document.documentElement.dataset.dshWebeNotifyVersion, VERSION_STAMP)
   const notifyDiag = JSON.parse(globalThis.document.documentElement.dataset.dshWebeNotify)
   assert.equal(notifyDiag.tier, 0, 'jobs 到位 → tier 0')
   assert.equal(notifyDiag.enabled, true, '默认开启')

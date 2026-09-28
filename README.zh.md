@@ -26,7 +26,8 @@
 ## 兼容性
 
 - **dsh ≥ 0.1.7-rc.2** —— 自 **0.2.0**(并入「跑完提醒」的版本)起需要。提醒器读的是当前三套 Client 契约:会话列表快照(`useSessions` 的 `ids` / `byId.origin`)、每会话 UI 状态(`useSessionStatus` 的 agent `running` + `pendingInteraction`)、以及 `jobs` 客户端服务按会话订阅的任务列表(`watchRows` → `state.rows`)。在 **dsh ≤ 0.1.6** 上「跑完提醒」自动缺席(插件其余功能不受影响)—— 那些版本把任务列表放在会话列表快照里、把弹框放在 `useSessionPendingInteraction`,两者都在 0.1.7 被移除。
-- **dsh ≥ 0.1.2-alpha.4** —— 其余功能自 **0.1.5** 起支持。重构后的前端以会话标准的 `useChat` hook 提供聊天快照、以 `useTrajectory` 提供轨迹,两条均已适配;旧版 dsh 保留 legacy 路径。自 **0.1.9** 起在 **dsh 0.1.3-alpha.2** 上验证通过;自 **0.1.10** 起在 **dsh 0.1.5-rc.2** 上验证通过(该版本新增「文件用系统程序打开」,已在本机实测);自 **0.1.11** 起在 **dsh 0.1.7-rc.2** 上验证通过 —— dsh 0.1.7 把 trajectory 快照里逐请求的 `provenance` 字段换成了 `requestConfig`/`providerMetadata`,曾让价格行无声消失;**0.1.11** 三种字段形态都读,自 0.1.2-alpha.4 起的宿主都能正常计价。**0.2.0**(跑完提醒)在 **dsh 0.1.7-rc.2** 上验证通过。
+- **dsh ≥ 0.1.2-alpha.4** —— 其余功能自 **0.1.5** 起支持。重构后的前端以会话标准的 `useChat` hook 提供聊天快照、以 `useTrajectory` 提供轨迹,两条均已适配;旧版 dsh 保留 legacy 路径。自 **0.1.9** 起在 **dsh 0.1.3-alpha.2** 上验证通过;自 **0.1.10** 起在 **dsh 0.1.5-rc.2** 上验证通过(该版本新增「文件用系统程序打开」,已在本机实测);自 **0.1.11** 起在 **dsh 0.1.7-rc.2** 上验证通过 —— dsh 0.1.7 把 trajectory 快照里逐请求的 `provenance` 字段换成了 `requestConfig`/`providerMetadata`,曾让价格行无声消失;**0.1.11** 三种字段形态都读,自 0.1.2-alpha.4 起的宿主都能正常计价。**0.2.0**(跑完提醒)在 **dsh 0.1.7-rc.2** 上验证通过,**0.2.1** 在 **dsh 0.2.0-rc.1** 上验证通过。
+- **0.2.1 为什么存在** —— dsh 0.2.0-rc.1 会把每个声明的 `@deepseek-ai/dsh-*` peer 范围与**运行时版本**比对,不匹配就跳过整个插件(`^0.1.7-rc.2` / `^0.1.3-alpha.2` 都不含 `0.2.0-rc.1`)。本版**没有代码改动**,只是把这些范围放宽为 `^0.1.x || ^0.2.0-rc.1`(顺带把探针里写死的版本戳改成从 `package.json` 读)。在 0.2.0-rc.1 上,已装好的 **0.2.0** 也可以不升级直接放行:授予精确版本豁免即可(`dsh plugin --profile <profile> allow-version @yangzhe1991/dsh-web-enhance@0.2.0 --dsh-version 0.2.0-rc.1 --accept-risk`)。
   - **0.2.0** 的额外说明:dsh 0.1.7 还改了 `dsh-client-ui-primitives` 的图标导出名(`IconChevronUpOutline14` → `IconChevronUpOutlineMedium`)。**0.2.0** 用的是新名字;旧版本在 0.1.7+ 上会渲染成空白页。
 - **dsh 0.1.0-rc.x** —— 仍通过旧版快照路径支持。
 
