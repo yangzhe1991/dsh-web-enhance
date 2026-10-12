@@ -169,6 +169,66 @@ export function ratesFor(model: string): ModelRates {
 }
 
 /**
+ * 已知 GLM provider 路由名(与宿主半 quota.ts 的 GLM_PROVIDER_ROUTES 同一
+ * 份口径,两处必须同步改):pi-ai 内置的两条 coding 路由与普通 OpenAPI 路由。
+ */
+export const GLM_PROVIDER_ROUTES: ReadonlySet<string> = new Set(['zai-coding-cn', 'zai', 'zhipu'])
+
+/**
+ * 判定一条路由是否走 GLM(渲染门控:最近请求命中 → 显示套餐额度徽章,
+ * 替代 DeepSeek 的 ¥ 价格)。双层判定与宿主半 isGlmRequest 一致:
+ * provider 在已知集合里,或 model id 以 `glm` 开头(不区分大小写,
+ * 兜住用户自定义路由名指向 GLM 网关的情况)。
+ */
+export function isGlmRoute(provider: string | undefined, model: string | undefined): boolean {
+  if (provider !== undefined && GLM_PROVIDER_ROUTES.has(provider)) return true
+  if (model !== undefined && model.toLowerCase().startsWith('glm')) return true
+  return false
+}
+
+/** 最近一条请求的路由与流式状态(渲染门控的数据基础)。 */
+export interface LatestRouteInfo {
+  /** 最近一条「带路由信息」请求的 provider(model 可能缺失)。 */
+  provider: string | undefined
+  /** 最近一条带路由信息请求的 model。 */
+  model: string | undefined
+  /**
+   * 最近一条请求(不限 provider)是否还没有 usage —— 即流式进行中。
+   * 已完成的请求必然带 usage(全 0 也算完成),所以「无 usage」等价于
+   * 「请求已发起、尚未落账」。GLM 徽章只在门控命中时挂载;流式状态
+   * 主要供诊断与将来「流式中才轮询」的收紧用。
+   */
+  inFlight: boolean
+}
+
+/**
+ * 从 trajectory 窗口提取最近路由信息(一次遍历,与 summarizeCost 的
+ * latestOverall 同口径,但不受「是否观察到 deepseek 用量」影响 ——
+ * GLM 会话里没有任何 deepseek 条目,summarizeCost 会返回 null,
+ * GLM 的门控必须独立于它)。
+ */
+export function latestRouteInfo(snapshot: RequestInspectionSnapshot | undefined): LatestRouteInfo {
+  let provider: string | undefined
+  let model: string | undefined
+  let latestRoutedAt = -Infinity
+  let latestAnyAt = -Infinity
+  let latestAnyUsage: unknown
+  for (const request of snapshot?.requests ?? []) {
+    if (request.startedAt >= latestAnyAt) {
+      latestAnyAt = request.startedAt
+      latestAnyUsage = request.usage
+    }
+    const route = requestRoute(request)
+    if (route.provider !== undefined && request.startedAt >= latestRoutedAt) {
+      latestRoutedAt = request.startedAt
+      provider = route.provider
+      model = route.model
+    }
+  }
+  return { provider, model, inFlight: readUsage(latestAnyUsage) === null }
+}
+
+/**
  * 时间戳(Unix epoch ms)是否落在北京时间的峰时。
  * 官网口径:高峰时段为北京时间**周一至周五** 9:00-12:00、
  * 14:00-18:00,其余时间(含周六周日全天)为闲时。

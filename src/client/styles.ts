@@ -57,15 +57,16 @@ const PLUGIN_CSS = `
   background: var(--dsw-alias-button-floating-hover);
   color: var(--dsw-alias-state-business-primary);
 }
-/* 价格行存在时(第二个条目),dock 出口包装变成整宽 flex 行:
-   价格 + stats 作为一个整体居中(与原 stats 行居中的视觉一致),
-   价格是行内第一个元素(flex:none,永不压缩、永不溢出);stats 行
-   不再限死 748px、不撑满剩余宽度,只在整体真正超出屏幕时才收缩
-   省略(justify-content:center 下唯一可收缩项,价格始终可见)。 */
-[data-slot="conversation.composer.dock"]:has(> :nth-child(2)) {
+/* 徽章(¥ 价格 / GLM 套餐额度)存在时才改变 dock 布局;组件返回 null 时
+   徽章 span 不存在,官方原始布局原样保留 —— :has(.dsh-webe-cost) 比
+   早期版本的 :has(> :nth-child(2)) 更准:那时官方 stats 只有一个条目,
+   「有第二个子元素」就等价于「价格在」;dsh 0.2.x 起 dock 常驻两个官方
+   pill(activity=轮数/速度、usage=token 消耗),旧条件永久成立、旧排序
+   只挪了第一个官方条目,徽章被卡在两个 pill 中间(2026-10-13 实测)。 */
+[data-slot="conversation.composer.dock"]:has(.dsh-webe-cost) {
   display: flex !important;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
   justify-content: center;
   width: 100%;
   max-width: none;
@@ -73,25 +74,21 @@ const PLUGIN_CSS = `
   padding: 4px calc(var(--dsh-composer-side-clearance) + 16px) 0;
   box-sizing: border-box;
 }
-/* 官方 stats 行(条目里 DOM 序第一个):挪到价格之后,让出自身
-   块级布局与固定宽度,只在剩余空间不足时收缩省略。 */
-[data-slot="conversation.composer.dock"]:has(> :nth-child(2)) > :first-child {
+/* 官方统计 pill(activity/usage,锚点带 data-composer-stat):排在徽章
+   之后。dock 出口包装是 display:contents,锚点与徽章同为 flex 子项,
+   order 直接生效。 */
+[data-slot="conversation.composer.dock"]:has(.dsh-webe-cost) [data-composer-stat] {
   order: 2;
-  width: auto;
-  max-width: none;
-  margin: 0;
-  padding: 0;
-  text-align: left;
-  flex: 0 1 auto;
-  min-width: 0;
 }
-/* 价格本体:flex:none 的行首项,永不压缩、永不溢出。 */
+/* 徽章本体:flex:none 的行首项。字号/行高抄官方 StatsPills 的公式
+   (bOPqQW_anchor:font-size: calc(13px-1)、line-height: calc(20px+δ)),
+   用同一组内容字号变量,用户调内容字号时高度才会跟官方 pill 一起变。 */
 .dsh-webe-cost {
   order: 0;
   flex: none;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 20px;
+  font-size: calc(var(--dsh-content-font-size-secondary, 13px) - 1px);
+  line-height: calc(20px + var(--dsh-content-font-delta-secondary, 0px));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

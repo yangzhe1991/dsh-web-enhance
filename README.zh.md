@@ -11,6 +11,7 @@
 
 - **思维链默认展开**:对话右下角悬浮的灯泡按钮(默认开启),自动展开对话里每一条「Think」思考折叠条,流式输出时直接看思维链全文,而不是一行摘要。
 - **会话价格统计**:会话走 DeepSeek 官方 API 时,在底部输入/输出 token 统计行同一行的最左侧显示当前会话的估算价格(人民币),按官网「模型 & 价格」页的价格逐请求按真实时间分峰谷计价。
+- **GLM Coding Plan 套餐额度**:会话走 GLM(Coding Plan)时,同一位置改显套餐额度徽章(如 `5h 13% · 周 2%`),悬浮给 5 小时窗口距重置剩余时间与周窗口已过时长。数据是宿主在 GLM 流式期间拉取的账号级真实用量,平时零查询。
 - **文件用系统程序打开**:点对话里出现的文件路径,交给本机默认程序(VS Code、文本编辑器等)打开,不再自动弹出右侧栏。可在设置 → 通用里关掉。
 - **跑完提醒**:会话真正干完活时响一声提示音(有弹框等你选择时也会响),页面不在前台时同时把标签页标题改成提醒。默认开启,可在设置 → 通用里关掉。*(从已停维护的 [dsh-task-notify](https://github.com/yangzhe1991/dsh-task-notify) 插件并入。)*
 
@@ -26,7 +27,7 @@
 ## 兼容性
 
 - **dsh ≥ 0.1.7-rc.2** —— 自 **0.2.0**(并入「跑完提醒」的版本)起需要。提醒器读的是当前三套 Client 契约:会话列表快照(`useSessions` 的 `ids` / `byId.origin`)、每会话 UI 状态(`useSessionStatus` 的 agent `running` + `pendingInteraction`)、以及 `jobs` 客户端服务按会话订阅的任务列表(`watchRows` → `state.rows`)。在 **dsh ≤ 0.1.6** 上「跑完提醒」自动缺席(插件其余功能不受影响)—— 那些版本把任务列表放在会话列表快照里、把弹框放在 `useSessionPendingInteraction`,两者都在 0.1.7 被移除。
-- **dsh ≥ 0.1.2-alpha.4** —— 其余功能自 **0.1.5** 起支持。重构后的前端以会话标准的 `useChat` hook 提供聊天快照、以 `useTrajectory` 提供轨迹,两条均已适配;旧版 dsh 保留 legacy 路径。自 **0.1.9** 起在 **dsh 0.1.3-alpha.2** 上验证通过;自 **0.1.10** 起在 **dsh 0.1.5-rc.2** 上验证通过(该版本新增「文件用系统程序打开」,已在本机实测);自 **0.1.11** 起在 **dsh 0.1.7-rc.2** 上验证通过 —— dsh 0.1.7 把 trajectory 快照里逐请求的 `provenance` 字段换成了 `requestConfig`/`providerMetadata`,曾让价格行无声消失;**0.1.11** 三种字段形态都读,自 0.1.2-alpha.4 起的宿主都能正常计价。**0.2.0**(跑完提醒)在 **dsh 0.1.7-rc.2** 上验证通过,**0.2.1** 在 **dsh 0.2.0-rc.1** 上验证通过。
+- **dsh ≥ 0.1.2-alpha.4** —— 其余功能自 **0.1.5** 起支持。重构后的前端以会话标准的 `useChat` hook 提供聊天快照、以 `useTrajectory` 提供轨迹,两条均已适配;旧版 dsh 保留 legacy 路径。自 **0.1.9** 起在 **dsh 0.1.3-alpha.2** 上验证通过;自 **0.1.10** 起在 **dsh 0.1.5-rc.2** 上验证通过(该版本新增「文件用系统程序打开」,已在本机实测);自 **0.1.11** 起在 **dsh 0.1.7-rc.2** 上验证通过 —— dsh 0.1.7 把 trajectory 快照里逐请求的 `provenance` 字段换成了 `requestConfig`/`providerMetadata`,曾让价格行无声消失;**0.1.11** 三种字段形态都读,自 0.1.2-alpha.4 起的宿主都能正常计价。**0.2.0**(跑完提醒)在 **dsh 0.1.7-rc.2** 上验证通过,**0.2.1** 在 **dsh 0.2.0-rc.1** 上验证通过,**0.2.2**(GLM 套餐额度)在 **dsh 0.2.1-alpha.2** 上验证通过 —— 该版本的 quota 通道依赖 `llm/stream` 瀑布事件、settings volatile 字段中继与 `remote.settings.describe`,均为 0.2.x 官方面;**GLM 额度功能自 0.2.2 起需要 dsh ≥ 0.2.0-rc.1**,其余功能不受影响(旧宿主上 quota 徽章静默缺席)。
 - **0.2.1 为什么存在** —— dsh 0.2.0-rc.1 会把每个声明的 `@deepseek-ai/dsh-*` peer 范围与**运行时版本**比对,不匹配就跳过整个插件(`^0.1.7-rc.2` / `^0.1.3-alpha.2` 都不含 `0.2.0-rc.1`)。本版**没有代码改动**,只是把这些范围放宽为 `^0.1.x || ^0.2.0-rc.1`(顺带把探针里写死的版本戳改成从 `package.json` 读)。在 0.2.0-rc.1 上,已装好的 **0.2.0** 也可以不升级直接放行:授予精确版本豁免即可(`dsh plugin --profile <profile> allow-version @yangzhe1991/dsh-web-enhance@0.2.0 --dsh-version 0.2.0-rc.1 --accept-risk`)。
   - **0.2.0** 的额外说明:dsh 0.1.7 还改了 `dsh-client-ui-primitives` 的图标导出名(`IconChevronUpOutline14` → `IconChevronUpOutlineMedium`)。**0.2.0** 用的是新名字;旧版本在 0.1.7+ 上会渲染成空白页。
 - **dsh 0.1.0-rc.x** —— 仍通过旧版快照路径支持。
@@ -69,6 +70,14 @@
   - **首次使用注意**:浏览器在用户与页面交互前禁止发声。**在页面任意处点一下或按一次键**,之后就能正常响(标题提醒不受此限制)。
   - **开关**:设置 → 通用 → 「跑完提醒」—— 一个开关同时管提示音与标签页标题,即时生效并跨刷新保留。
 
+- 🪙 **GLM Coding Plan 套餐额度** —— 会话走 GLM 时,价格统计的位置改显订阅额度用量:
+
+  - **门控与 ¥ 价格互斥**:会话最近一次请求走 GLM(provider 路由 `zai-coding-cn` / `zai` / `zhipu`,或模型 id 以 `glm` 开头)时,该位置渲染额度徽章;切回 DeepSeek 后恢复 ¥ 价格。两个口径互不干扰。
+  - **展示**:紧凑徽章如 `5h 13% · 周 2%`;悬浮明细按两个方向给 —— 5 小时窗口给百分比 + **距重置剩余时间**,周窗口给百分比 + **本窗口已过时长**,外加套餐等级与数据更新时刻。
+  - **数据是账号级真实用量**(不是本地估算):宿主调用智谱 quota API(`GET /api/monitor/usage/quota/limit`,Bearer 鉴权),返回的就是官方「用量统计」页的数字 —— Claude Code 等其它工具的消耗也统计在内。key 从凭据区解析,自动配对端点(`ZAI_CODING_CN_API_KEY` → open.bigmodel.cn,`ZAI_API_KEY` → api.z.ai),key 不进浏览器。
+  - **触发是「流式才查」**:只在 GLM 请求正在流式进行时拉取(开始时立即拉一次,期间每 20 秒一次,结束补拉一次);没有任何 GLM 会话在跑时零外部请求、零定时器。徽章只在「正在查看 GLM 会话」时每 5 秒读一次宿主缓存(本地 RPC,无外部流量)。
+  - **没配 key 就整体沉默**:凭据区找不到 GLM key 时不显示徽章、不报错;排查走 `document.documentElement.dataset.dshWebeQuota`(remote 是否就绪、describe 成败、载荷年龄)。
+
 ## 安装(30 秒)
 
 ```sh
@@ -90,6 +99,8 @@ dsh plugin --profile web add link:/path/to/@yangzhe1991/dsh-web-enhance
 会话价格统计注册到 `conversation.composer.dock`(官方 stats 行同一个 slot,与它排在同一行、作为行内第一个元素)。数据两个来源:`trajectory` 视图(逐请求携带 provider/model/usage/时间戳/startSeq,精确计价的基础)与 `tokenUsage` 投影(整个会话的全量 token)。逐请求的 provider/model 字段随 dsh 版本变过(0.1.5 及以前是 `provenance`,0.1.7 起是 `requestConfig`/`providerMetadata`),三种形态的读取都收敛在 `cost.ts` 的 `requestRoute` 里 —— 宿主再次改名字时表现为"价格行静默消失",所以组件同时把判定过程写到 `document.documentElement.dataset.dshWebeCost`(窗口请求数、其中官方 provider 条数、最近路由、总价、是否渲染),一行读取即可定位。每条观测到 usage 的请求按 startSeq 持久化累计(localStorage,last-wins,重试替换不重复计),投影超出累计器合计的差额(从未观测过的历史)按闲时价估算并标「≈」;最近一次请求不是 `deepseek-official` 时价格行不渲染。
 
 跑完提醒注册到 `shell.overlay`(root 作用域的条目,渲染 `null`)。判定逻辑是 `notify-monitor.ts` 里的纯状态机 —— 不依赖 React / DOM、定时器可注入,所以整套时序能在本地用假时钟离线回放(`node probe/notify-probe.mjs` 覆盖了有意思的那几条:忙转闲、agent 让出回合但任务还在跑、忙周期内有任务失败、弹框出现、开关关闭与再打开)。React 那侧只做「把官方快照投影成每会话事实」:`useSessions`(`ids` / `byId.origin`,跳过 subagent 子会话)、`useSessionStatus`(`running`、`pendingInteraction.key`),任务列表来自 `jobs` 客户端服务(按会话 `watchRows`,只在会话 running 或仍算「忙」时订阅)。该服务缺失时提醒静默缺席、插件其余功能照常 —— 插件**刻意不把 `jobs` 写进 `inject` 列表**,并把装配状态写到 `document.documentElement.dataset.dshWebeNotify`(`tier`、`error`、`enabled`、会话/任务订阅数、每会话阶段),「怎么不响」一行控制台即可定位,不用靠猜。
+
+GLM 套餐额度是本插件第一段宿主侧代码,原因是硬性的:quota API 要用 API key,而 key 只在宿主凭据区(凭据服务按设计不向浏览器回传密钥值)。通路全部走官方面 —— **触发**是 `llm/stream` 瀑布监听器(宿主本来就看得见每次模型调用;`yield* next()` 原样透传分片,async 生成器的 `finally` 同时覆盖正常结束/抛错/取消,手法照抄官方 session-checkpoint-policy);**中继**是本插件 settings 条目的 volatile 字段(`glmQuota`,只在载荷实质变化时写,因为每次 settings 写入都要走 profile patch 文件改写 + 配置 reconcile);**读取**是浏览器半每 5 秒一次的 `remote.settings.describe()`(只在正在查看 GLM 会话时轮询)。数据形状校验、徽章/时长格式化都在 `quota-format.ts`(零依赖纯函数,`node probe/glm-quota-client.test.mjs` 离线验证);触发/去重/写入链路在 `probe/glm-quota.test.mjs` 用真实抓包应答回放验证。
 
 ## 开发
 

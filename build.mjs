@@ -63,6 +63,12 @@ await build({
   platform: 'node',
   target: 'es2022',
   sourcemap: true,
+  // 宿主提供的包一律 external,import 语句原样保留、运行时由宿主的
+  // node_modules 解析。schema/服务类必须用宿主那一版:打进产物会因版本
+  // 漂移出现「本地能跑、宿主里炸」的分裂(实例:本地 schemastery@3.18.1
+  // 的 any() 没有 .volatile(),宿主 3.18.5-alpha.1 有 —— 打包版在宿主里
+  // 直接 TypeError)。
+  external: ['@deepseek-ai/schemastery'],
 })
 
 // —— 浏览器半 ——

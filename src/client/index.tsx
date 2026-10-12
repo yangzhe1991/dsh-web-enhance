@@ -29,6 +29,13 @@
  * 任务失败时改用下行提示音。默认开启,设置 → 通用 里可关。该功能从已停维护的
  * @yangzhe1991/dsh-task-notify 迁移而来,决策口径见 notify-monitor.ts 的文件头。
  *
+ * 功能六:GLM Coding Plan 套餐额度 —— 会话最近请求走 GLM(zai-coding-cn /
+ * zai / zhipu 路由,或模型 id 以 glm 开头)时,价格统计的位置改显套餐额度
+ * 徽章「5h 13% · 周 2%」,悬浮给 5 小时窗口距重置剩余时间与周窗口已过时长。
+ * 与 ¥ 价格互斥(按最近请求路由二选一)。数据是宿主半区在 GLM 流式期间
+ * 拉取的账号级真实用量(含其它工具的消耗),经 settings volatile 字段中继,
+ * 触发与中继链路见 node 半 index.ts 与 glm-quota.ts 的文件头。
+ *
  * 已移除:逐轮对话导航(上/下箭头)。dsh 0.1.7 官方已内置回合导航轨
  * (TurnNavigator,对话右侧的刻度条),自己再放一对箭头是重复功能;而且官方
  * 0.1.7 改了对话列的 DOM 结构(分步过程组内部也有 [data-chat-flow]、折叠行改用
@@ -67,12 +74,16 @@ import {
   DEEPSEEK_PROVIDER,
   formatCostYuan,
   formatTokens,
+  isGlmRoute,
+  latestRouteInfo,
   loadAccumulator,
   requestRoute,
   saveAccumulator,
   summarizeCost,
 } from './cost'
 import type { RequestInspectionSnapshot } from './cost'
+// 功能六:GLM Coding Plan 套餐额度徽章(数据读取见 glm-quota.ts 文件头)。
+import { GlmQuotaBadge, setQuotaClientCtx } from './glm-quota'
 // 功能三:点文件交系统默认程序打开(拦截 ctx.sidebarRight.openResource)。
 import {
   NativeOpenRow,
@@ -141,7 +152,7 @@ function expandThinkRowsWithin(root: ParentNode): void {
 
 
 /** 需要的 client 服务:sessions(会话数据)、slots(slot 注册)。 */
-export const inject = ['sessions', 'slots']
+export const inject = ['sessions', 'slots', 'remote', 'remote.settings']
 
 /** Client 插件 body:注册 composer.dock 价格行、设置开关行、思维链按钮与提醒监视器,并接管文件点击。 */
 export function apply(ctx: ClientContext): void {
@@ -154,6 +165,9 @@ export function apply(ctx: ClientContext): void {
     console.warn('[dsh-web-enhance] 装配打点失败(已忽略):', error)
   }
   ensureStyle()
+  // 功能六:把 ctx 交给 quota 模块(describe 走 remote;'remote' 已声明在
+  // 模块级 inject 里,服务缺失时 ctx.remote 为 undefined,徽章静默隐藏)。
+  setQuotaClientCtx(ctx)
   ctx.slots.inject(
     'conversation.composer.dock',
     () => ctx.slots.register({
@@ -446,6 +460,15 @@ function SessionCostMeter({ useSession, useTrajectory, useProjection, sessionId 
     () => summarizeCost(trajectory, usage, loadAccumulator(sessionId)),
     [trajectory, usage, sessionId],
   )
+  // 最近路由信息(GLM 门控):与 summarizeCost 的 latestOverall 同口径,
+  // 但独立于「是否观察到 deepseek 用量」—— GLM 会话里 summary 为 null。
+  // 注意:本组件所有 hook(useMemo/useEffect)必须无条件调用,分支只能
+  // 放在最后一个 hook 之后 —— 之前把早退放在这里,门控翻转的那次渲染
+  // hook 数量变少,React 直接抛 "Rendered fewer hooks than expected",
+  // 整个 dock(连同官方统计行)一起消失(2026-10-13 实测)。
+  const route = useMemo(() => latestRouteInfo(trajectory), [trajectory])
+  // 渲染门控:最近请求命中 GLM → 套餐额度徽章(与 ¥ 互斥,同一位置);
+  // 否则维持原行为(DeepSeek ¥ 或不渲染)。
 
   useEffect(() => {
     if (next !== loadAccumulator(sessionId)) saveAccumulator(sessionId, next)
@@ -472,12 +495,19 @@ function SessionCostMeter({ useSession, useTrajectory, useProjection, sessionId 
         latest: latest === null ? null : `${latest.provider ?? '?'}/${latest.model ?? '?'}`,
         total: summary?.total ?? null,
         shown: summary !== null && summary.current,
+        // GLM 门控:徽章切到套餐额度视图时的状态入口(额度自身细节在
+        // dataset.dshWebeQuota,见 glm-quota.ts)。
+        glm: isGlmRoute(route.provider, route.model),
+        inFlight: route.inFlight,
       })
     } catch {
       // 非浏览器环境(探针)忽略:诊断属性不是功能本身
     }
-  }, [trajectory, summary])
+  }, [trajectory, summary, route])
 
+  // 渲染分支(全部 hook 之后,顺序稳定):GLM → 套餐额度徽章;
+  // DeepSeek → ¥ 价格;其它/无数据 → 不渲染。
+  if (isGlmRoute(route.provider, route.model)) return <GlmQuotaBadge active />
   if (summary === null || !summary.current) return null
 
   const inputTokens = summary.tokens.miss + summary.tokens.hit + summary.tokens.write
