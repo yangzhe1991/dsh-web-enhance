@@ -163,7 +163,7 @@ export function GlmQuotaBadge({ active }: { active: boolean }) {
 
   return (
     <Tooltip label={label} side="top" delayMs={500}>
-      <span className="dsh-webe-cost">{formatQuotaBadge(payload.windows)}</span>
+      <span className="dsh-webe-cost">{formatQuotaBadge(payload.windows, now)}</span>
     </Tooltip>
   )
 }

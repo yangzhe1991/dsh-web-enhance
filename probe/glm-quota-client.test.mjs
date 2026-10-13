@@ -97,11 +97,18 @@ check('extractPayload:单条窗口缺字段只丢该条,不整包丢弃', () => 
   assert.equal(payload.windows[0].kind, 'short')
 })
 
-check('formatQuotaBadge:徽章文案(窗口标签从时长推导,不硬编码 5h)', () => {
-  assert.equal(fmt.formatQuotaBadge(REAL_PAYLOAD.windows), '5h 13% · 周 2%')
+check('formatQuotaBadge:三段式徽章(2026-10-14 定稿:额度×2 + 周窗口时间进度)', () => {
+  // 周窗口已过 10% 的时刻
+  const week = REAL_PAYLOAD.windows[1]
+  const NOW = week.startMs + 0.1 * week.windowMs
+  assert.equal(fmt.formatQuotaBadge(REAL_PAYLOAD.windows, NOW), '5h额度13%，周额度2%，周窗口10%')
   // 官方哪天把短窗口调成 4h,标签自动跟随(而不是写死「5h」)。
   const fourHours = [{ ...REAL_PAYLOAD.windows[0], windowMs: 14400000 }]
-  assert.equal(fmt.formatQuotaBadge(fourHours), '4h 13%')
+  assert.equal(fmt.formatQuotaBadge(fourHours, NOW), '4h额度13%')
+  // 只有短窗口时降级输出
+  assert.equal(fmt.formatQuotaBadge([REAL_PAYLOAD.windows[0]], NOW), '5h额度13%')
+  // 周窗口时间进度钳 0-100
+  assert.equal(fmt.formatQuotaBadge(REAL_PAYLOAD.windows, week.resetMs + 999), '5h额度13%，周额度2%，周窗口100%')
 })
 
 check('formatDuration:中文时长(向下取整,负值按 0)', () => {

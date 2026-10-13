@@ -82,19 +82,25 @@ export function extractPayload(descriptors: SectionDescriptor[] | undefined): Qu
 }
 
 /**
- * 紧凑徽章文本:每个窗口一段「{label} {percent}%」,如「5h 13% · 周 2%」。
- * 窗口标签从时长推导(小时级 → 「{n}h」,≥1 天 → 「周」),不硬编码 5h ——
- * 官方哪天调整窗口长度,文案自动跟上。
+ * 紧凑徽章文本(用户 2026-10-14 定稿格式):
+ * 「5h额度2%，周额度19%，周窗口14%」 —— 5 小时窗口的额度使用百分比、
+ * 周窗口的额度使用百分比、以及周窗口的**时间**进度百分比(与额度进度
+ * 对照,能看出这周的额度花没花超节奏)。段间用中文全角逗号。
+ * 窗口标签从时长推导(小时级 → 「{n}h」),不硬编码 5h —— 官方哪天
+ * 调整窗口长度,文案自动跟上;只有部分窗口时按现有窗口降级输出。
  */
-export function formatQuotaBadge(windows: readonly QuotaWindow[]): string {
-  return windows.map((w) => `${windowLabel(w)} ${Math.round(w.percentage)}%`).join(' · ')
-}
-
-/** 单窗口的短标签:小时级显示「{n}h」,一天及以上显示「周」。 */
-function windowLabel(w: QuotaWindow): string {
-  if (w.windowMs >= 86_400_000) return '周'
-  const hours = Math.max(1, Math.round(w.windowMs / 3_600_000))
-  return `${hours}h`
+export function formatQuotaBadge(windows: readonly QuotaWindow[], now: number): string {
+  const segments: string[] = []
+  for (const w of windows) {
+    if (w.windowMs >= 86_400_000) {
+      segments.push(`周额度${Math.round(w.percentage)}%`)
+      segments.push(`周窗口${windowElapsedPercent(w, now)}%`)
+    } else {
+      const hours = Math.max(1, Math.round(w.windowMs / 3_600_000))
+      segments.push(`${hours}h额度${Math.round(w.percentage)}%`)
+    }
+  }
+  return segments.join('，')
 }
 
 /**
