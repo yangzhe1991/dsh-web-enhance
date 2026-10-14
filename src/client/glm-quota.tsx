@@ -7,10 +7,12 @@
  *   remote.settings.describe() 读取。轮询节奏 5s、只在徽章挂载(= 正在
  *   查看 GLM 会话)时轮询,纯本地 RPC,无外部流量 —— 外部查询的触发
  *   完全由宿主半的 llm/stream 监听器控制,两边职责不重叠;
- * - 画:紧凑徽章「5h 13% · 周 2%」+ 悬浮明细。悬浮口径(用户 2026-10-13
- *   确认):5 小时窗口给百分比 + 距重置剩余时间;周窗口给百分比 +
- *   本窗口已过时长。重置/已过时刻由 nextResetTime 与窗口时长推算
- *   (start = reset - windowMs),不依赖服务端额外字段。
+ * - 画:紧凑徽章(用户 2026-10-15 定稿四段式「5h额度X%，周额度Y%，
+ *   安全线S%，DdHh后重置」)+ 悬浮完整明细(窗口口径沿用户 2026-10-13
+ *   确认;安全线/越线告警沿 2026-10-15 定稿)。安全线的固定开销预算
+ *   (fixedDaily)由宿主配置决定、随载荷下发,客户端实时计算。重置/
+ *   已过时刻由 nextResetTime 与窗口时长推算(start = reset - windowMs),
+ *   不依赖服务端额外字段。
  *
  * 悬浮明细与徽章互为补充,数据一律来自服务端真实用量(账号级,含
  * Claude Code 等其它工具的消耗),本地不做任何按 token 的积分估算。
@@ -21,7 +23,7 @@ import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { QuotaPayload } from '../quota'
 // 纯展示函数(校验/格式化)在 quota-format.ts,便于 node 探针独立加载验证;
 // 本文件只留涉及 React/remote 的装配与渲染。
-import { extractPayload, formatDuration, formatQuotaBadge, namespacesOf, windowElapsedPercent } from './quota-format'
+import { computeSafety, extractPayload, formatDuration, formatQuotaBadge, namespacesOf, windowElapsedPercent } from './quota-format'
 import type { SectionDescriptor } from './quota-format'
 
 const ENTRY_ID = 'web-enhance'
@@ -155,15 +157,29 @@ export function GlmQuotaBadge({ active }: { active: boolean }) {
       : `${Math.round(w.windowMs / 60_000)} 分钟窗口`
     return `${shortLabel} ${Math.round(w.percentage)}%（距重置 ${formatDuration(remaining)}）`
   })
+  // —— 固定开销安全线(2026-10-15 新增口径) ——
+  // 在周窗口上算,预算取载荷下发的 fixedDaily(宿主插件配置的生效值)。
+  // computeSafety 对坏输入返回 null → 安全线相关行整段省略(不渲染残缺
+  // 数据);每个渲染周期现算,倒计时与预留不依赖下一次拉取。
+  const week = payload.windows.find((w) => w.kind === 'week')
+  const safety = week === undefined ? null : computeSafety(week, payload.fixedDaily, now)
+  const safetyLines: string[] = []
+  if (safety !== null && week !== undefined) {
+    safetyLines.push(`安全线 ${Math.round(safety.ceilingPct)}%：已用超过它，即使其余需求全停，固定开销也撑不到重置`)
+    safetyLines.push(safety.risk
+      ? `⚠ 已越线：周剩余 ${Math.round(week.remaining)} 分已不够固定开销预留 ${Math.round(safety.reserve)} 分，其余需求必须马上让路`
+      : `安全余量 ${Math.round(safety.headroom)} 分（固定开销预留 ${safety.fixedDaily}/天 × 剩余 ${safety.daysLeft.toFixed(1)} 天 ≈ ${Math.round(safety.reserve)} 分）`)
+  }
   const label = [
     `GLM Coding Plan${level} · 用量为账号级真实数据`,
     ...lines,
+    ...safetyLines,
     `更新于 ${formatClock(payload.fetchedAt)}`,
   ].join('\n')
 
   return (
     <Tooltip label={label} side="top" delayMs={500}>
-      <span className="dsh-webe-cost">{formatQuotaBadge(payload.windows, now)}</span>
+      <span className="dsh-webe-cost">{formatQuotaBadge(payload.windows, now, safety)}</span>
     </Tooltip>
   )
 }

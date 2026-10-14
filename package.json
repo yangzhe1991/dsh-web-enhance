@@ -1,7 +1,7 @@
 {
   "name": "@yangzhe1991/dsh-web-enhance",
-  "version": "0.2.4",
-  "description": "DSH Web UI 增强插件:思维链默认展开、DeepSeek 官方 API 会话价格统计、GLM Coding Plan 套餐额度显示、文件用系统默认程序打开、跑完提醒(提示音 + 标签页标题) | DSH Web UI enhancement plugin: thinking-chain default-expand, session cost meter for the official DeepSeek API, GLM Coding Plan quota badge, opening files in the desktop default app & a completion alert (chime + tab title)",
+  "version": "0.2.5",
+  "description": "DSH Web UI 增强插件:思维链默认展开、DeepSeek 官方 API 会话价格统计、GLM Coding Plan 套餐额度与固定开销安全线、文件用系统默认程序打开、跑完提醒(提示音 + 标签页标题) | DSH Web UI enhancement plugin: thinking-chain default-expand, session cost meter for the official DeepSeek API, GLM Coding Plan quota badge with a fixed-overhead safety line, opening files in the desktop default app & a completion alert (chime + tab title)",
   "publishConfig": {
     "access": "public"
   },

@@ -1,0 +1,1 @@
+{"code":200,"msg":"操作成功","data":{"limits":[{"type":"CREDIT_LIMIT","unit":3,"number":5,"usage":28000,"currentValue":4897,"remaining":23102,"percentage":17,"nextResetTime":1792008864561},{"type":"CREDIT_LIMIT","unit":6,"number":1,"usage":140000,"currentValue":48807,"remaining":91192,"percentage":34,"nextResetTime":1792429157998}],"level":"max"},"success":true}

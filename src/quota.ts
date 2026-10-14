@@ -99,10 +99,23 @@ export interface QuotaWindow {
   percentage: number
 }
 
-/** 归一化后的 quota 载荷(写入 settings volatile 字段的最终形状)。 */
+/**
+ * 归一化后的 quota 载荷(写入 settings volatile 字段的最终形状)。
+ */
 export interface QuotaPayload {
-  /** 本插件归一化结构的版本(未来字段变化时供客户端识别)。 */
-  version: 1
+  /**
+   * 本插件归一化结构的版本。v2(0.2.5 起)新增 fixedDaily —— 固定开销
+   * 日均预算(积分/天),安全线按它在客户端实时计算(见 client/quota-format
+   * 的 computeSafety)。带版本号的原因:客户端按版本做形状校验,老客户端
+   * 遇到新载荷(或反过来)一律拒绝渲染,绝不渲染残缺数据。
+   */
+  version: 2
+  /**
+   * 固定开销日均预算(积分/天),来自插件配置 fixedDaily(缺省 13000)。
+   * 客户端算安全线要用它,所以随载荷一起下发 —— 配置改了,下次拉取
+   * 自然带出新值;payloadSignature 也含它,保证配置变化必然触发重写。
+   */
+  fixedDaily: number
   /** 拉取时刻(epoch ms),客户端展示「更新于」。 */
   fetchedAt: number
   /** 套餐等级(如 "max" / "pro"),服务端原样。 */
@@ -139,10 +152,12 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v)
  *   非正数)整条丢弃 —— 宁可少显示一个窗口,也不显示错误的「已过/剩余」;
  * - 窗口按时长分类:< 1 天为 'short'(小时级),≥ 1 天为 'week';
  * - percentage 缺失时按 current/total 自算(四舍五入,与官方口径可能差
- *   1%,仅兜底,正常应答都有现成值)。
+ *   1%,仅兜底,正常应答都有现成值);
+ * - fixedDaily 原样进载荷(见 QuotaPayload 的说明),本函数不校验它的
+ *   业务合理性 —— 调用方(index.ts)已按「非负有限数」兜底过默认值。
  * @returns 无效应答返回 null(调用方保持上一次的载荷不动)。
  */
-export function normalizeQuota(raw: RawQuotaResponse, fetchedAt: number): QuotaPayload | null {
+export function normalizeQuota(raw: RawQuotaResponse, fetchedAt: number, fixedDaily: number): QuotaPayload | null {
   if (raw.code !== 200 || raw.success !== true) return null
   const data = raw.data
   if (typeof data !== 'object' || data === null) return null
@@ -183,10 +198,11 @@ export function normalizeQuota(raw: RawQuotaResponse, fetchedAt: number): QuotaP
     })
   }
   if (windows.length === 0) return null
-  // 稳定排序:短窗口在前(徽章文案「5h 13% · 周 2%」的顺序依赖这里)。
+  // 稳定排序:短窗口在前(徽章文案「5h额度…，周额度…」的顺序依赖这里)。
   windows.sort((a, b) => a.windowMs - b.windowMs)
   return {
-    version: 1,
+    version: 2,
+    fixedDaily,
     fetchedAt,
     level: typeof level === 'string' && level.length > 0 ? level : null,
     windows,
@@ -199,13 +215,16 @@ export function normalizeQuota(raw: RawQuotaResponse, fetchedAt: number): QuotaP
  * 为什么不直接 JSON.stringify 整个载荷:fetchedAt 每次拉取必然变化,
  * 直接比较会把「数据没变、只是时间戳新了」也当成变化,造成无意义写入
  * (settings 写入会走 profile patch 文件改写 + 插件配置 reconcile,
- * 必须省着用)。签名只含展示会变的部分:窗口的百分比/剩余/窗口起止。
+ * 必须省着用)。签名含 fixedDaily:配置改动(比如把固定开销从 13000
+ * 调成别的值)即使没伴随任何额度变化,也要触发一次重写,否则客户端
+ * 会一直拿旧配置算安全线。
  */
 export function payloadSignature(payload: QuotaPayload | null): string {
   if (payload === null) return ''
   return JSON.stringify([
     payload.version,
     payload.level,
+    payload.fixedDaily,
     payload.windows.map((w) => [w.kind, w.windowMs, w.startMs, w.resetMs, w.current, w.total, w.remaining, w.percentage]),
   ])
 }

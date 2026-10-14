@@ -48,10 +48,38 @@ const ENTRY_ID = 'web-enhance'
 /** 本插件 settings 条目里承载 quota 载荷的 volatile 字段名。 */
 export const GLM_QUOTA_FIELD = 'glmQuota'
 
-/** 插件配置:唯一字段是 volatile 的 quota 载荷缓存(由宿主自己写入)。 */
+/** 插件配置里「固定开销日均预算」的字段名(普通配置,非 volatile)。 */
+export const GLM_FIXED_DAILY_FIELD = 'fixedDaily'
+
+/**
+ * 固定开销日均预算的默认值(积分/天)。
+ *
+ * 口径(2026-10-15 与用户确认):常驻自动化负载(key 0ca4ef8e…)实测
+ * 2026-10-13 单日 ≈12518 积分,留安全裕度取整 13000;账单积累几天后
+ * 可经插件配置覆盖(见 Config.fixedDaily)。
+ */
+export const GLM_FIXED_DAILY_DEFAULT = 13000
+
+/**
+ * 插件配置:
+ * - fixedDaily —— 固定开销日均预算(积分/天),安全线的输入。普通配置
+ *   (非 volatile),可经 profile 的 cordis patch 行 config 覆盖;
+ * - glmQuota —— volatile 的 quota 载荷缓存(由宿主自己写入,见下)。
+ */
 export const Config = z.object({
+  [GLM_FIXED_DAILY_FIELD]: z.number(),
   [GLM_QUOTA_FIELD]: z.any().volatile(),
 })
+
+/**
+ * 从插件配置里解析固定开销日均预算:非负有限数才采纳,否则回退默认值。
+ * schemastery 这份分支没有 .default() 原型方法,缺省值在代码里兜底,
+ * 顺带把「配了负数/非数字」这类脏输入一并拦下。
+ */
+export function resolveFixedDaily(config: unknown): number {
+  const raw = (config as { [GLM_FIXED_DAILY_FIELD]?: unknown } | undefined)?.[GLM_FIXED_DAILY_FIELD]
+  return typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : GLM_FIXED_DAILY_DEFAULT
+}
 
 /** 需要的宿主服务:llm(触发源)、credentials(key)、settings(中继)。 */
 export const inject = ['llm', 'credentials', 'settings']
@@ -105,7 +133,9 @@ const FETCH_TIMEOUT_MS = 10_000
 const LOG_REPEAT_MS = 60_000
 
 /** 插件 body:装配 quota 触发器。其余功能全部在浏览器半,这里不碰。 */
-export function apply(ctx: HostContext, _config: unknown): void {
+export function apply(ctx: HostContext, config: unknown): void {
+  // 固定开销日均预算:安全线的输入,随载荷下发(见 quota.ts QuotaPayload)。
+  const fixedDaily = resolveFixedDaily(config)
   // —— 状态(每个插件实例一份,随 fiber 释放) ——
   /** 正在流式进行的 GLM 请求数(引用计数:并发请求/子代理都算)。 */
   let activeStreams = 0
@@ -215,7 +245,7 @@ export function apply(ctx: HostContext, _config: unknown): void {
       warnOnce(`quota 应答不是 JSON: ${String(error)}`)
       return
     }
-    const payload = normalizeQuota(raw as Parameters<typeof normalizeQuota>[0], Date.now())
+    const payload = normalizeQuota(raw as Parameters<typeof normalizeQuota>[0], Date.now(), fixedDaily)
     if (payload === null) {
       warnOnce('quota 应答格式不认识(code/success/limits 不符合预期),保持上一次载荷')
       return

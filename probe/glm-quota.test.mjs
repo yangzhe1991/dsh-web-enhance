@@ -6,9 +6,10 @@
  * 探针原则(踩过的坑,见 AGENTS.md):
  * - mock 按生产语义写:插件拿到的 settings/credentials 服务对象自始至终
  *   是同一个引用,断言打在插件真正调用的那个实例上;
- * - 断言数据用「真实世界的值」:quota 应答直接读 2026-10-13 用真实 key
- *   从 open.bigmodel.cn 抓下来的原始应答(/tmp/q1.json,Max 套餐,
- *   5h 窗口 13% / 周 2%),不用拍脑袋造的形状;
+ * - 断言数据用「真实世界的值」:quota 应答读仓库内 fixture(probe/
+ *   fixtures/glm-quota-real.json,2026-10-15 用真实 key 从 open.bigmodel.cn
+ *   抓的原始应答,Max 套餐,5h 窗口 17% / 周 34%)—— 早期版本放 /tmp,
+ *   机器一重启探针就断,这次起进仓库;
  * - 探针全绿只证明宿主半逻辑自洽,不证明端点契约没变 —— 端点契约由
  *   真实请求验证(见 README 的验证记录)。
  */
@@ -16,8 +17,8 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { apply } from '../lib/index.js'
 
-// —— 载入真实应答(2026-10-13 实测抓包) ——
-const rawReal = JSON.parse(await readFile('/tmp/q1.json', 'utf8'))
+// —— 载入真实应答(2026-10-15 实测抓包,仓库内 fixture) ——
+const rawReal = JSON.parse(await readFile(new URL('./fixtures/glm-quota-real.json', import.meta.url), 'utf8'))
 
 // —— 生产语义的 mock 服务(同一引用贯穿全程) ——
 const updates = []
@@ -108,15 +109,16 @@ assert.equal(fetchCalls[0].authorization, 'Bearer sk-probe-test-key')
 assert.equal(updates.length, 1, `应恰好写入一次 settings,实际 ${updates.length}`)
 assert.equal(updates[0].ns, 'web-enhance')
 const payload = updates[0].patch.glmQuota
-assert.equal(payload.version, 1)
+assert.equal(payload.version, 2, '载荷版本必须是 v2(v1 客户端直接拒渲染)')
+assert.equal(payload.fixedDaily, 13000, 'apply 未传配置时回退默认 13000')
 assert.equal(payload.level, 'max')
 assert.equal(payload.windows.length, 2)
-// 用真实应答的值断言:5h 窗口 13%、周窗口 2%(归一化不得歪曲服务端数据)。
+// 用真实应答的值断言:5h 窗口 17%、周窗口 34%(归一化不得歪曲服务端数据)。
 assert.equal(payload.windows[0].kind, 'short')
-assert.equal(payload.windows[0].percentage, 13)
+assert.equal(payload.windows[0].percentage, 17)
 assert.equal(payload.windows[0].total, 28000)
 assert.equal(payload.windows[1].kind, 'week')
-assert.equal(payload.windows[1].percentage, 2)
+assert.equal(payload.windows[1].percentage, 34)
 assert.equal(payload.windows[1].total, 140000)
 
 // —— case B:非 GLM 请求必须零开销直通 ——
@@ -145,6 +147,19 @@ await new Promise((resolve) => setTimeout(resolve, 50))
 // —— case D:15s 最小间隔去重 —— 同步连发不得重复写/重复外呼 ——
 assert.equal(updates.length, 1, 'MIN_FETCH_GAP 内的补拉不得产生第二次写入(载荷签名也没变)')
 
+// —— case D2:插件配置的 fixedDaily 必须进载荷 ——
+// 第二个实例:settingsMock.configure 会抛「已配置」,插件按约定吞掉并继续;
+// lastFetchAt 是实例内状态,新实例的首拉不受上一个实例的 15s 间隔限制。
+// 载荷签名含 fixedDaily(见 quota.ts),所以额度值没变也会触发这次写入。
+apply(ctx, { fixedDaily: 14000 })
+assert.notEqual(streamListener, null)
+for await (const chunk of streamListener({ provider: 'zai-coding-cn', model: 'glm-5.3-flash' }, () => fakeGlmStream())) {
+  void chunk
+}
+await new Promise((resolve) => setTimeout(resolve, 100))
+assert.equal(updates.length, 2, '配置变化必须触发一次重写(签名含 fixedDaily)')
+assert.equal(updates[1].patch.glmQuota.fixedDaily, 14000, '配置的 fixedDaily 必须原样进载荷')
+
 // —— case E:插件 disposer 清理(热重载不漏定时器) ——
 disposers.forEach(({ label, dispose }) => dispose())
 
@@ -153,11 +168,23 @@ disposers.forEach(({ label, dispose }) => dispose())
 const { transform } = await import('esbuild')
 const quotaSource = await readFile(new URL('../src/quota.ts', import.meta.url), 'utf8')
 const { code: quotaJs } = await transform(quotaSource, { loader: 'ts', format: 'esm', target: 'es2022' })
-const { normalizeQuota } = await import(`data:text/javascript;base64,${Buffer.from(quotaJs).toString('base64')}`)
-assert.equal(normalizeQuota({ code: 200, success: false, data: { limits: [] } }, 0), null, 'success=false 必须拒')
-assert.equal(normalizeQuota({ code: 401, success: true, data: { limits: [{ unit: 3, number: 5, nextResetTime: 1 }] } }, 0), null, 'code!=200 必须拒')
-assert.equal(normalizeQuota({ code: 200, success: true, data: { limits: 'nope' } }, 0), null, 'limits 非数组必须拒')
-assert.equal(normalizeQuota({ code: 200, success: true, data: { limits: [{ unit: 99, number: 5, nextResetTime: 1 }] } }, 0), null, '未知 unit 必须丢弃(不猜)')
+const { normalizeQuota, payloadSignature } = await import(`data:text/javascript;base64,${Buffer.from(quotaJs).toString('base64')}`)
+assert.equal(normalizeQuota({ code: 200, success: false, data: { limits: [] } }, 0, 13000), null, 'success=false 必须拒')
+assert.equal(normalizeQuota({ code: 401, success: true, data: { limits: [{ unit: 3, number: 5, nextResetTime: 1 }] } }, 0, 13000), null, 'code!=200 必须拒')
+assert.equal(normalizeQuota({ code: 200, success: true, data: { limits: 'nope' } }, 0, 13000), null, 'limits 非数组必须拒')
+assert.equal(normalizeQuota({ code: 200, success: true, data: { limits: [{ unit: 99, number: 5, nextResetTime: 1 }] } }, 0, 13000), null, '未知 unit 必须丢弃(不猜)')
+// v2 载荷:fixedDaily 原样透传,version 固定 2(客户端按版本做形状校验)。
+const okPayload = normalizeQuota(
+  { code: 200, success: true, data: { level: 'max', limits: [{ unit: 6, number: 1, usage: 140000, remaining: 91192, percentage: 35, nextResetTime: 1792429157998 }] } },
+  1000, 13000,
+)
+assert.equal(okPayload.version, 2)
+assert.equal(okPayload.fixedDaily, 13000)
+assert.equal(okPayload.windows[0].kind, 'week')
+// 安全线口径联动:payloadSignature 必须把 fixedDaily 算进去。
+const sigA = payloadSignature(okPayload)
+const sigB = payloadSignature({ ...okPayload, fixedDaily: 14000 })
+assert.notEqual(sigA, sigB, 'fixedDaily 变化必须改变签名(触发客户端拿到新预算)')
 
 console.log('[probe] glm-quota 宿主半探针全部通过')
 console.log(`[probe] warnings(${warnings.length}):`)

@@ -48,7 +48,11 @@ export function extractPayload(descriptors: SectionDescriptor[] | undefined): Qu
   const raw: unknown = (row?.value as Record<string, unknown> | undefined)?.glmQuota
   if (typeof raw !== 'object' || raw === null) return null
   const record = raw as Record<string, unknown>
-  if (record.version !== 1) return null
+  // v2(0.2.5 起)才带 fixedDaily;老载荷(v1)直接拒 —— 两半发布永远
+  // 成对,运行中不会出现 v1 载荷,宁可隐藏也不渲染缺口径的残缺数据。
+  if (record.version !== 2) return null
+  // fixedDaily 是安全线的输入:缺失/负数/非有限数一律整包拒绝。
+  if (typeof record.fixedDaily !== 'number' || !Number.isFinite(record.fixedDaily) || record.fixedDaily < 0) return null
   if (typeof record.fetchedAt !== 'number' || !Number.isFinite(record.fetchedAt)) return null
   if (!Array.isArray(record.windows) || record.windows.length === 0) return null
   // windows 逐条最小校验(单条缺字段时只丢该条,不整包丢弃)。
@@ -74,7 +78,8 @@ export function extractPayload(descriptors: SectionDescriptor[] | undefined): Qu
   }
   if (windows.length === 0) return null
   return {
-    version: 1,
+    version: 2,
+    fixedDaily: record.fixedDaily,
     fetchedAt: record.fetchedAt,
     level: typeof record.level === 'string' ? record.level : null,
     windows,
@@ -82,25 +87,100 @@ export function extractPayload(descriptors: SectionDescriptor[] | undefined): Qu
 }
 
 /**
- * 紧凑徽章文本(用户 2026-10-14 定稿格式):
- * 「5h额度2%，周额度19%，周窗口14%」 —— 5 小时窗口的额度使用百分比、
- * 周窗口的额度使用百分比、以及周窗口的**时间**进度百分比(与额度进度
- * 对照,能看出这周的额度花没花超节奏)。段间用中文全角逗号。
- * 窗口标签从时长推导(小时级 → 「{n}h」),不硬编码 5h —— 官方哪天
- * 调整窗口长度,文案自动跟上;只有部分窗口时按现有窗口降级输出。
+ * 固定开销安全线(用户 2026-10-15 定稿口径):
+ *
+ *   安全线 ceiling = 周总额度 − 固定开销预留(fixedDaily × 距重置天数)
+ *
+ * 已用额度超过 ceiling 时,**即使其余需求立刻全部停手**,剩余额度也不够
+ * 固定开销撑到重置 —— 这是「其余需求必须马上让路」的硬临界线。headroom
+ * (安全余量)= 剩余额度 − 预留:正数是还能给其余需求烧的量,负数即越线。
+ *
+ * 纯函数、每个渲染周期现算:倒计时和预留随真实时钟走,不需要等下一次
+ * 拉取(拉取只在 GLM 流式期间发生,两次拉取之间安全线照样要准)。
  */
-export function formatQuotaBadge(windows: readonly QuotaWindow[], now: number): string {
+export interface SafetyInfo {
+  /** 参与计算的固定开销日均预算(积分/天,来自载荷)。 */
+  fixedDaily: number
+  /** 距重置天数(小数,钳 ≥0;时钟偏差不产生负天数)。 */
+  daysLeft: number
+  /** 固定开销预留 = fixedDaily × daysLeft(积分)。 */
+  reserve: number
+  /** 已用上限 = max(0, 周总额度 − 预留)(积分)。 */
+  ceiling: number
+  /** 安全线百分比(与「周额度」同刻度,0-100 取整,便于直接对比)。 */
+  ceilingPct: number
+  /** 安全余量 = 周剩余额度 − 预留(积分;负 = 已越线)。 */
+  headroom: number
+  /** true = 已越线(headroom < 0)。 */
+  risk: boolean
+}
+
+/**
+ * 算周窗口的固定开销安全线。输入不合法(总额度非正、预算非负数之外)
+ * 返回 null,调用方据此省略安全线段 —— 与「不渲染残缺数据」同一纪律。
+ */
+export function computeSafety(w: QuotaWindow, fixedDaily: number, now: number): SafetyInfo | null {
+  if (!(w.total > 0)) return null
+  if (!(fixedDaily >= 0) || !Number.isFinite(fixedDaily)) return null
+  const daysLeft = Math.max(0, (w.resetMs - now) / 86_400_000)
+  const reserve = fixedDaily * daysLeft
+  const ceiling = Math.max(0, w.total - reserve)
+  const headroom = w.remaining - reserve
+  return {
+    fixedDaily,
+    daysLeft,
+    reserve,
+    ceiling,
+    ceilingPct: Math.max(0, Math.min(100, (ceiling / w.total) * 100)),
+    headroom,
+    risk: headroom < 0,
+  }
+}
+
+/**
+ * 紧凑徽章文本(用户 2026-10-15 定稿四段式):
+ * 「5h额度18%，周额度35%，安全线40%，5d15h后重置」—— 前两段是各窗口的
+ * 额度使用百分比,安全线段与「周额度」同刻度(已用逼近/超过它 = 固定
+ * 开销有风险),末段是周窗口重置倒计时(用户指定的 d/h 紧凑记法)。
+ * 窗口标签从时长推导(小时级 → 「{n}h」),不硬编码「5h」;没有周窗口
+ * 或固定开销口径无效时降级:安全线段省略、倒计时段省略。
+ */
+export function formatQuotaBadge(
+  windows: readonly QuotaWindow[],
+  now: number,
+  safety: SafetyInfo | null = null,
+): string {
   const segments: string[] = []
+  let week: QuotaWindow | undefined
   for (const w of windows) {
     if (w.windowMs >= 86_400_000) {
+      week = w
       segments.push(`周额度${Math.round(w.percentage)}%`)
-      segments.push(`周窗口${windowElapsedPercent(w, now)}%`)
     } else {
       const hours = Math.max(1, Math.round(w.windowMs / 3_600_000))
       segments.push(`${hours}h额度${Math.round(w.percentage)}%`)
     }
   }
+  if (week !== undefined) {
+    if (safety !== null) segments.push(`安全线${Math.round(safety.ceilingPct)}%`)
+    segments.push(`${formatCountdown(week.resetMs - now)}后重置`)
+  }
   return segments.join('，')
+}
+
+/**
+ * 重置倒计时的紧凑记法(用户 2026-10-15 定稿):「5d15h」;不足一天降为
+ * 「15h30m」,不足一小时降为「42m」。向下取整,负值(时钟偏差)按 0。
+ * 与悬浮明细的中文 formatDuration 刻意不同:徽章要短,悬浮要可读。
+ */
+export function formatCountdown(ms: number): string {
+  const totalMinutes = Math.max(0, Math.floor(ms / 60_000))
+  const days = Math.floor(totalMinutes / 1440)
+  const hours = Math.floor((totalMinutes % 1440) / 60)
+  const minutes = totalMinutes % 60
+  if (days > 0) return `${days}d${hours}h`
+  if (hours > 0) return `${hours}h${minutes}m`
+  return `${minutes}m`
 }
 
 /**

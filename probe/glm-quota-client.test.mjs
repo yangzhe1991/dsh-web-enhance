@@ -39,9 +39,10 @@ function check(name, fn) {
   }
 }
 
-// —— 宿主半会写入的真实载荷形状(值取自 2026-10-13 实测应答) ——
+// —— 宿主半会写入的真实载荷形状(值取自 2026-10-13 实测应答,v2 含 fixedDaily) ——
 const REAL_PAYLOAD = {
-  version: 1,
+  version: 2,
+  fixedDaily: 13000,
   fetchedAt: 1791851000000,
   level: 'max',
   windows: [
@@ -58,9 +59,17 @@ const describeShape = (payload) => [{ ns: 'web-enhance', value: { glmQuota: payl
 check('extractPayload:真实形状完整解析', () => {
   const payload = fmt.extractPayload(describeShape(REAL_PAYLOAD))
   assert.equal(payload.level, 'max')
+  assert.equal(payload.fixedDaily, 13000, 'v2 载荷必须带出 fixedDaily(安全线的输入)')
   assert.equal(payload.windows.length, 2)
   assert.equal(payload.windows[0].kind, 'short')
   assert.equal(payload.windows[0].percentage, 13)
+})
+
+check('extractPayload:版本与口径守门 —— v1 载荷 / fixedDaily 坏值 → null(不渲染残缺数据)', () => {
+  // v1(0.2.4 及更早的宿主半产物)没有 fixedDaily,安全线无从算起。
+  assert.equal(fmt.extractPayload(describeShape({ ...REAL_PAYLOAD, version: 1 })), null, 'v1 载荷必须拒')
+  assert.equal(fmt.extractPayload(describeShape({ ...REAL_PAYLOAD, fixedDaily: undefined })), null, '缺 fixedDaily 必须拒')
+  assert.equal(fmt.extractPayload(describeShape({ ...REAL_PAYLOAD, fixedDaily: -5 })), null, '负数预算必须拒')
 })
 
 check('extractPayload:ns 不对 / 形状坏了 → null(徽章隐藏,不渲染残缺数据)', () => {
@@ -97,18 +106,59 @@ check('extractPayload:单条窗口缺字段只丢该条,不整包丢弃', () => 
   assert.equal(payload.windows[0].kind, 'short')
 })
 
-check('formatQuotaBadge:三段式徽章(2026-10-14 定稿:额度×2 + 周窗口时间进度)', () => {
-  // 周窗口已过 10% 的时刻
+check('formatQuotaBadge:四段式徽章(2026-10-15 定稿:额度×2 + 安全线 + 重置倒计时)', () => {
   const week = REAL_PAYLOAD.windows[1]
-  const NOW = week.startMs + 0.1 * week.windowMs
-  assert.equal(fmt.formatQuotaBadge(REAL_PAYLOAD.windows, NOW), '5h额度13%，周额度2%，周窗口10%')
+  // 锚点一律用 resetMs 减整数毫秒:REAL_PAYLOAD 的 startMs/resetMs 是
+  // 各自独立的实测值(不严格满足 start = reset − windowMs),用 startMs
+  // 推 NOW 会让期望值带浮点尾巴(踩过一次)。
+  const NOW = week.resetMs - 6 * 86_400_000 // 距重置整 6 天
+  const safety = fmt.computeSafety(week, 13000, NOW)
+  // 预留 13000×6=78000;ceiling 140000−78000=62000 → 44.2857…%
+  assert.equal(fmt.formatQuotaBadge(REAL_PAYLOAD.windows, NOW, safety), '5h额度13%，周额度2%，安全线44%，6d0h后重置')
+  // 没有 safety(周窗口缺失等场景)时降级:安全线段省略,倒计时段保留
+  assert.equal(fmt.formatQuotaBadge(REAL_PAYLOAD.windows, NOW), '5h额度13%，周额度2%，6d0h后重置')
   // 官方哪天把短窗口调成 4h,标签自动跟随(而不是写死「5h」)。
   const fourHours = [{ ...REAL_PAYLOAD.windows[0], windowMs: 14400000 }]
   assert.equal(fmt.formatQuotaBadge(fourHours, NOW), '4h额度13%')
-  // 只有短窗口时降级输出
+  // 只有短窗口时降级输出(无周窗口 → 无安全线/倒计时)
   assert.equal(fmt.formatQuotaBadge([REAL_PAYLOAD.windows[0]], NOW), '5h额度13%')
-  // 周窗口时间进度钳 0-100
-  assert.equal(fmt.formatQuotaBadge(REAL_PAYLOAD.windows, week.resetMs + 999), '5h额度13%，周额度2%，周窗口100%')
+  // 重置点之后(时钟偏差):预留归零 → 安全线 100%,倒计时钳 0
+  assert.equal(
+    fmt.formatQuotaBadge(REAL_PAYLOAD.windows, week.resetMs + 999, fmt.computeSafety(week, 13000, week.resetMs + 999)),
+    '5h额度13%，周额度2%，安全线100%，0m后重置',
+  )
+})
+
+check('computeSafety:安全线口径(ceiling = 总额度 − fixedDaily × 距重置天数)', () => {
+  const week = REAL_PAYLOAD.windows[1]
+  const NOW = week.resetMs - 6 * 86_400_000 // 距重置整 6 天,全部断言精确可算
+  const safety = fmt.computeSafety(week, 13000, NOW)
+  assert.equal(safety.daysLeft, 6)
+  assert.equal(safety.reserve, 78000)
+  assert.equal(safety.ceiling, 62000)
+  assert.equal(safety.ceilingPct, 44.285714285714285)
+  assert.equal(safety.headroom, 136273 - 78000, '安全余量 = 周剩余 − 预留')
+  assert.equal(safety.risk, false)
+  // 越线场景:预算 20000/天 × 整周 7 天 = 140000 = 全部额度 → 必越线
+  const risk = fmt.computeSafety(week, 20000, week.resetMs - 7 * 86_400_000)
+  assert.equal(risk.reserve, 140000)
+  assert.equal(risk.ceiling, 0)
+  assert.equal(risk.headroom, 136273 - 140000)
+  assert.equal(risk.risk, true, 'headroom < 0 必须判越线')
+  // 非整天数也要准(6.3 天:浮点容差内比对,徽章层只取整展示)
+  const frac = fmt.computeSafety(week, 13000, week.resetMs - 544_320_000)
+  assert.ok(Math.abs(frac.daysLeft - 6.3) < 1e-9)
+  assert.ok(Math.abs(frac.reserve - 81900) < 1e-6)
+  // 坏输入 → null(调用方省略安全线段,不渲染残缺数据)
+  assert.equal(fmt.computeSafety(week, -1, NOW), null, '负数预算必须拒')
+  assert.equal(fmt.computeSafety({ ...week, total: 0 }, 13000, NOW), null, '总额度非正必须拒')
+})
+
+check('formatCountdown:重置倒计时紧凑记法(d/h/m 向下取整,负值按 0)', () => {
+  assert.equal(fmt.formatCountdown(5 * 86400_000 + 15 * 3600_000), '5d15h')
+  assert.equal(fmt.formatCountdown(15 * 3600_000 + 30 * 60_000), '15h30m')
+  assert.equal(fmt.formatCountdown(42 * 60_000), '42m')
+  assert.equal(fmt.formatCountdown(-5), '0m')
 })
 
 check('formatDuration:中文时长(向下取整,负值按 0)', () => {
